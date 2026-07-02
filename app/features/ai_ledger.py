@@ -11,6 +11,16 @@ import re
 import time
 from typing import Optional
 
+
+def _obs_swallow(_ctx, _exc):
+    """Swallow a non-critical exception but emit one observable log line."""
+    try:
+        from .security import log_json as _lj
+        _lj('swallowed_exception', where=_ctx,
+            error=f'{type(_exc).__name__}: {str(_exc)[:200]}')
+    except Exception:
+        pass
+
 from sqlalchemy import text as _sql
 
 _REDACT = [
@@ -54,8 +64,8 @@ def safe_record(session_factory, payload: dict) -> None:
                  "ok": 1 if payload.get("success") else 0,
                  "err": redact(str(payload.get("error") or ""))[:400] or None})
             s.commit()
-    except Exception:
-        pass
+    except Exception as _e:
+        _obs_swallow('ai_ledger.record', _e)
 
 
 def today_count(s) -> int:

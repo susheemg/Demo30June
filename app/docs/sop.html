@@ -781,5 +781,34 @@ if (secs.length && 'IntersectionObserver' in window) {
   secs.forEach(s => io.observe(s));
 }
 </script>
+
+<div class="section" id="adminchange">
+  <div class="section-hdr"><span class="sec-tag">SOP-30</span><h2>Content &amp; layout administration (Admin Change)</h2></div>
+  <p>Administrators can retitle, reword and restructure the application without code changes. All edits apply live for every user and are written to the audit trail.</p>
+  <table>
+    <tr><th>Step</th><th>Action</th><th>System behaviour</th></tr>
+    <tr><td>1</td><td>Open <b>Admin Change</b> (admin-only nav item; requires the <code>admin.content</code> permission)</td><td>Content tab lists 1,188 catalogued strings across 17 groups with search</td></tr>
+    <tr><td>2</td><td>Edit any title, heading, subtitle, instruction, button, column, label, option, badge, hint or placeholder; <b>Save</b></td><td>Override stored in <code>content_override</code>; applied live everywhere the exact default string renders, including the login screen; audit event <code>v2.content_set</code></td></tr>
+    <tr><td>3</td><td>Optional: toggle <b>Preview</b> before saving</td><td>Buffered edits render live across the app client-side only; <b>Save all previewed</b> persists, <b>Exit preview</b> reverts</td></tr>
+    <tr><td>4</td><td>Use <b>+ Custom string</b> for any exact text not in the catalogue</td><td>Stored as <code>custom::&lt;source&gt;</code>; same live application</td></tr>
+    <tr><td>5</td><td>Switch to the <b>Layout</b> tab to show/hide or reorder navigation items and groups</td><td>Stored in <code>layout_setting</code>; nav restructured live for everyone; role-gated items (e.g. Methodology, Configuration) are excluded and remain governed by role</td></tr>
+    <tr><td>6</td><td><b>Reset</b> a single string, <b>Reset all</b>, or <b>Reset layout</b> to return to built-in defaults</td><td>Override rows deleted; defaults restored immediately</td></tr>
+  </table>
+  <p class="note">Governance: editing rights are carried by the <code>admin.content</code> permission only; every change is attributable in the hash-chained audit trail. Export/import endpoints support promoting an approved wording set between environments.</p>
+</div>
+
+<div class="section" id="brainmap">
+  <div class="section-hdr"><span class="sec-tag">SOP-31</span><h2>Entity graph &mdash; concentration investigation (brain map)</h2></div>
+  <p>The Entity Graph renders the live estate as an interactive brain map: vendors, shared fourth parties, common-ownership clusters and business units, generated from the database on each visit.</p>
+  <table>
+    <tr><th>Step</th><th>Action</th><th>System behaviour</th></tr>
+    <tr><td>1</td><td>Open <b>Analyse &rarr; Entity Graph</b> (requires <code>vendor.view</code>)</td><td>Force-directed map loads from <code>GET /api/v2/graph/network</code>; red halos mark critical vendors and single points of failure</td></tr>
+    <tr><td>2</td><td>Orient: drag the background to orbit (3D) or pan (2D); scroll to zoom; toggle <b>3D orbit / 2D flat</b>; filter node types with the chips; search by name</td><td>Physics keeps the layout fluid; <code>prefers-reduced-motion</code> disables auto-orbit. Use <b>Collapse owners</b> to fold ownership clusters into super-nodes, and <b>&#9654; Replay build-up</b> / the time slider to watch concentration form over time (engagement-dated)</td></tr>
+    <tr><td>3</td><td>Click any node</td><td>Detail panel shows type, connections, criticality/SPOF flags and clickable neighbours for hop-by-hop traversal</td></tr>
+    <tr><td>4</td><td>Act from the panel: vendor &rarr; <b>Open Vendor 360</b>; fourth party or owner &rarr; <b>Contagion</b>; business unit &rarr; <b>BU exposure</b></td><td>Contagion modal quantifies exposed vendors, critical vendors, engagements and business units if that entity degrades</td></tr>
+    <tr><td>5</td><td>Record findings per SOP-19 (issues) or SOP-21 (incidents) where a SPOF or cluster requires treatment</td><td>Standard issue/incident chains apply</td></tr>
+  </table>
+</div>
+
 </body>
 </html>

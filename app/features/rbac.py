@@ -76,6 +76,7 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("Administration", "admin.integrations", "Manage integrations & API tokens"),
     ("Administration", "admin.webhooks", "Manage webhooks & procurement triggers"),
     ("Administration", "admin.config", "Manage system configuration & risk parameters"),
+    ("Administration", "admin.content", "Edit application content & labels (Content Studio)"),
     ("Vendor Portal", "portal.self", "Vendor self-service portal"),
 ]
 
@@ -134,9 +135,14 @@ def seed(session: Session) -> None:
     session.flush()
 
     all_perms = {p.key: p for p in session.scalars(select(Permission)).all()}
-    have_roles = {r.key for r in session.scalars(select(Role)).all()}
+    have_roles = {r.key: r for r in session.scalars(select(Role)).all()}
     for rkey, (label, color, desc, perms) in SYSTEM_ROLES.items():
         if rkey in have_roles:
+            # Keep existing roles as-is, but always refresh full-access ("ALL")
+            # roles so newly added permissions are granted automatically on boot
+            # (e.g. the admin role picks up admin.content without a manual grant).
+            if perms == "ALL":
+                have_roles[rkey].permissions = list(all_perms.values())
             continue
         role = Role(key=rkey, label=label, description=desc, color=color,
                     is_system=True)

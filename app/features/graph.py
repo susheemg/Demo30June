@@ -124,3 +124,118 @@ def contagion(s, node_type: str, node_id: str) -> dict:
             "affected_vendors": vendors_out, "vendor_count": len(vendors_out),
             "engagement_count": eng_count, "critical_count": sum(1 for x in vendors_out if x["is_critical"]),
             "business_units": sorted(bus)}
+
+
+def network(s, max_nodes: int = 500) -> dict:
+    """Node-link graph over the live estate for the interactive brain map:
+    vendors, shared fourth parties, common-ownership clusters and business units.
+    Read-only; built straight from the database each call."""
+    from .registry_models import (VendorRecord, EngagementRecord, VendorGroup,
+                                  FourthPartyRecord, FourthPartyVendor)
+    vendors = s.scalars(select(VendorRecord)).all()
+    groups = {g.group_id: g for g in s.scalars(select(VendorGroup)).all()}
+    engs = s.scalars(select(EngagementRecord)).all()
+    fps = {f.fourth_party_id: f for f in s.scalars(select(FourthPartyRecord)).all()}
+    links_fp = s.scalars(select(FourthPartyVendor)).all()
+
+    nodes, links = [], []
+    seen = set()
+
+    def add_node(nid, ntype, label, **meta):
+        if nid in seen or len(nodes) >= max_nodes:
+            return False
+        seen.add(nid)
+        nodes.append({"id": nid, "type": ntype, "label": label, **meta})
+        return True
+
+    eng_by_vendor = {}
+    for e in engs:
+        eng_by_vendor.setdefault(e.vendor_id, []).append(e)
+
+    def _d(x):
+        x = (x or "").strip()
+        return x[:10] if len(x) >= 10 and x[:4].isdigit() else None
+
+    # temporal signal: a vendor "arrives" with its earliest engagement start_date
+    v_since = {}
+    for vid, es in eng_by_vendor.items():
+        ds = sorted(d for d in (_d(e.start_date) for e in es) if d)
+        if ds:
+            v_since[vid] = ds[0]
+
+    for v in vendors:
+        add_node("V:" + v.vendor_id, "vendor", v.legal_name,
+                 vendor_id=v.vendor_id, critical=bool(v.is_critical),
+                 country=getattr(v, "hq_country", None),
+                 engagements=len(eng_by_vendor.get(v.vendor_id, [])),
+                 since=v_since.get(v.vendor_id))
+
+    # fourth parties + links (spof flag mirrors build_graph threshold)
+    total = len(vendors) or 1
+    fp_vendors = {}
+    for ln in links_fp:
+        fp_vendors.setdefault(ln.fourth_party_id, []).append(ln.vendor_id)
+    for fid, vids in fp_vendors.items():
+        f = fps.get(fid)
+        fsince = sorted(d for d in (v_since.get(v) for v in vids) if d)
+        add_node("F:" + fid, "fourth_party", (f.legal_name if f else fid),
+                 fourth_party_id=fid, service=(f.service_provided if f else None),
+                 spof=len(vids) >= max(10, total * 0.15), shared=len(vids) > 1,
+                 since=(fsince[0] if fsince else None))
+        for vid in vids:
+            if ("V:" + vid) in seen and ("F:" + fid) in seen:
+                links.append({"s": "F:" + fid, "t": "V:" + vid, "k": "supplies",
+                              "since": v_since.get(vid)})
+
+    # ownership clusters (only multi-vendor owners, mirroring build_graph)
+    by_owner = {}
+    for v in vendors:
+        key = None; label = None
+        if v.ultimate_parent:
+            key = "UP:" + _norm(v.ultimate_parent); label = v.ultimate_parent
+        elif v.group_id:
+            g = groups.get(v.group_id)
+            key = "GR:" + v.group_id; label = (g.name if g else v.group_id)
+        if key:
+            by_owner.setdefault(key, {"label": label, "vendors": []})["vendors"].append(v.vendor_id)
+    for key, o in by_owner.items():
+        if len(o["vendors"]) <= 1:
+            continue
+        osince = sorted(d for d in (v_since.get(v) for v in o["vendors"]) if d)
+        add_node("O:" + key, "owner", o["label"], owner=o["label"],
+                 since=(osince[0] if osince else None))
+        for vid in o["vendors"]:
+            if ("V:" + vid) in seen and ("O:" + key) in seen:
+                links.append({"s": "O:" + key, "t": "V:" + vid, "k": "owns",
+                              "since": v_since.get(vid)})
+
+    # business units (from engagements)
+    bu_vendors = {}
+    bu_link_since = {}
+    for e in engs:
+        if e.business_unit:
+            bu = e.business_unit.strip()
+            bu_vendors.setdefault(bu, set()).add(e.vendor_id)
+            d = _d(e.start_date)
+            if d:
+                k = (bu, e.vendor_id)
+                if k not in bu_link_since or d < bu_link_since[k]:
+                    bu_link_since[k] = d
+    for bu, vids in bu_vendors.items():
+        bsince = sorted(d for d in (bu_link_since.get((bu, v)) for v in vids) if d)
+        add_node("B:" + _norm(bu), "bu", bu, since=(bsince[0] if bsince else None))
+        for vid in vids:
+            if ("V:" + vid) in seen and ("B:" + _norm(bu)) in seen:
+                links.append({"s": "B:" + _norm(bu), "t": "V:" + vid, "k": "consumes",
+                              "since": bu_link_since.get((bu, vid))})
+
+    all_dates = sorted(d for d in ([n.get("since") for n in nodes] +
+                                   [l.get("since") for l in links]) if d)
+    return {"nodes": nodes, "links": links,
+            "timeline": {"min": all_dates[0], "max": all_dates[-1]} if all_dates else None,
+            "counts": {"vendors": len(vendors),
+                       "fourth_parties": len(fp_vendors),
+                       "owners": sum(1 for o in by_owner.values() if len(o["vendors"]) > 1),
+                       "business_units": len(bu_vendors),
+                       "links": len(links)},
+            "truncated": len(nodes) >= max_nodes}

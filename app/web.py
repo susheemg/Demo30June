@@ -89,7 +89,7 @@ _PAGE = r"""<!DOCTYPE html>
   #view>*:nth-child(4){animation-delay:.12s} #view>*:nth-child(n+5){animation-delay:.16s}
 
   /* ---- shell: topbar + grouped sidebar + main ---- */
-  #app{display:flex;flex-direction:column;min-height:100vh}
+  #app{display:flex;flex-direction:column;height:100vh;max-height:100vh;overflow:hidden}
   .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;justify-content:space-between;gap:16px;
           background:rgba(11,14,12,.86);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
           color:#fff;padding:13px 22px;border-bottom:1px solid rgba(201,155,95,.22);box-shadow:0 6px 20px rgba(0,0,0,.16)}
@@ -105,8 +105,12 @@ _PAGE = r"""<!DOCTYPE html>
   .role-badge .role-name{font-size:13px;font-weight:600} .role-badge .role-kind{font-size:10px;color:#a8b0a8}
   .signout{color:#fff;background:rgba(255,255,255,.1);border-radius:10px;padding:7px 13px;font-size:12px;font-weight:500;cursor:pointer;border:none}
   .signout:hover{background:var(--crit)}
-  .shell{display:flex;flex:1;min-height:0}
-  aside{width:232px;background:var(--soft);border-right:1px solid var(--line);padding:18px 10px;flex-shrink:0;overflow-y:auto;transition:width .25s ease,padding .2s ease}
+  .shell{display:flex;flex:1;min-height:0;overflow:hidden}
+  aside{width:232px;background:var(--soft);border-right:1px solid var(--line);padding:18px 10px;flex-shrink:0;overflow-y:auto;overscroll-behavior:contain;transition:width .25s ease,padding .2s ease}
+  aside::-webkit-scrollbar,main::-webkit-scrollbar{width:9px}
+  aside::-webkit-scrollbar-thumb,main::-webkit-scrollbar-thumb{background:rgba(20,48,42,.18);border-radius:8px;border:2px solid transparent;background-clip:content-box}
+  aside::-webkit-scrollbar-thumb:hover,main::-webkit-scrollbar-thumb:hover{background:rgba(20,48,42,.32);background-clip:content-box}
+  aside,main{scrollbar-width:thin;scrollbar-color:rgba(20,48,42,.22) transparent}
   .nav-group{margin-bottom:14px}
   .nav-group-label{font-size:11px;font-weight:700;color:#16241d;text-transform:uppercase;padding:5px 10px;letter-spacing:.07em;cursor:pointer;user-select:none;border-radius:7px;display:block}
   .nav-group-label:hover{background:rgba(0,0,0,.05)}
@@ -204,7 +208,7 @@ _PAGE = r"""<!DOCTYPE html>
   nav a.active::before{content:"";position:absolute;left:-1px;top:50%;transform:translateY(-50%);width:3px;height:18px;border-radius:3px;background:var(--accent)}
   nav .ico{font-size:16px;width:20px;text-align:center;flex:none}
 
-  main{flex:1;padding:28px 32px;overflow-y:auto;min-width:0;max-width:1280px}
+  main{flex:1;padding:28px 32px;overflow-y:auto;overscroll-behavior:contain;min-width:0;max-width:1280px}
   .top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px}
   .top h1{font-size:33px;font-weight:600;letter-spacing:-.012em;line-height:1.08}
   .top .sub{color:var(--mute);font-size:14.5px;margin-top:8px;max-width:680px}
@@ -738,6 +742,24 @@ _PAGE = r"""<!DOCTYPE html>
   .asr-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-2)}
   .asr-row:last-child{border-bottom:none}
   @media(max-width:900px){.dkpis,.dgrid{grid-template-columns:1fr 1fr}}
+  /* ===== v4.9 fluid displays & form polish (UX pass) ===== */
+  .card{transition:box-shadow .22s ease, transform .22s ease, border-color .22s ease}
+  .card:hover{box-shadow:0 10px 28px -14px rgba(20,48,42,.28);border-color:#D8CFBB}
+  .btn{transition:transform .14s ease, box-shadow .14s ease, background .14s ease, opacity .14s ease}
+  .btn:hover{transform:translateY(-1px)}
+  .btn:active{transform:translateY(0) scale(.985)}
+  #nav a{transition:background .16s ease, color .16s ease, padding-left .16s ease}
+  #view{animation:viewIn .28s ease}
+  @keyframes viewIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;border-color:#B8862B;
+    box-shadow:0 0 0 3px rgba(184,134,43,.18);transition:border-color .15s ease, box-shadow .15s ease}
+  .field{margin-bottom:10px}
+  .field label{display:block;font-size:11px;font-weight:600;color:#5A6472;margin-bottom:4px;letter-spacing:.02em}
+  .card .grid{align-items:start}
+  table tr{transition:background .14s ease}
+  @media (prefers-reduced-motion: reduce){
+    .card,.btn,#nav a,#view,table tr,input,select,textarea{transition:none!important;animation:none!important}
+  }
 </style>
 </head>
 <body>
@@ -856,6 +878,7 @@ _PAGE = r"""<!DOCTYPE html>
         <div class="nav-group"><div class="nav-group-label">Miscellaneous</div>
           <a data-v="guideddemo"><span class="ico">🎬</span>Guided Demo</a>
           <a data-v="admin"><span class="ico">⚙️</span>Admin</a>
+          <a data-v="adminchange" id="navAdminChange" style="display:none"><span class="ico">✎</span>Admin Change</a>
           <a data-v="aicontrol"><span class="ico">🧠</span>AI Control</a>
           <a data-v="config" id="navConfig" style="display:none"><span class="ico">🎛️</span>Configuration</a>
           <a data-v="settings"><span class="ico">⛭</span>Settings</a>

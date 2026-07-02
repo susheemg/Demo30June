@@ -210,7 +210,7 @@ async function doLogin(){
     document.getElementById("whoName").textContent=d.username;
     document.getElementById("whoRole").textContent=d.role.toUpperCase();
     window._role=d.role;
-    if(d.role==="admin"){ const nm=document.getElementById("navMethodology"); if(nm) nm.style.display=""; const nc=document.getElementById("navConfig"); if(nc) nc.style.display=""; }
+    if(d.role==="admin"){ const nm=document.getElementById("navMethodology"); if(nm) nm.style.display=""; const nc=document.getElementById("navConfig"); if(nc) nc.style.display=""; const na=document.getElementById("navAdminChange"); if(na) na.style.display=""; if(window.loadLayout) window.loadLayout(); }
     go("home"); initLang(); loadNavOrder(); loadFormats();
   }catch(e){ const el=document.getElementById("loginErr"); el.textContent=e.message; el.classList.remove("hidden"); }
 }
@@ -838,12 +838,303 @@ async function dqAccept(vid,i){ const sg=_dqSug[i]; if(!sg)return;
 let _eg=null;
 V.entitygraph=async()=>{
   const view=document.getElementById("view");
-  view.innerHTML=`<div class="top"><div><h1>Entity Graph</h1><div class="sub">Ownership &amp; sub-provider concentration · contagion modelling</div></div></div>
-   <div id="egbody" class="muted">Building entity graph…</div>`;
-  try{ _eg=await api2("/graph/overview"); egRender(); }catch(e){ document.getElementById("egbody").innerHTML=`<div class="err">${esc(e.message)}</div>`; }
+  view.innerHTML=`<div class="top"><div><h1>Entity Graph</h1><div class="sub">The living brain map of the estate — vendors, sub-providers, common owners and business units, straight from the database. Click any node.</div></div></div>
+   <div class="card" style="padding:12px;margin-bottom:14px">
+     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+       <button id="egMode" class="btn sm" onclick="egToggleMode()">◉ 3D orbit</button>
+       <button id="egPhys" class="btn sm ghost" onclick="egTogglePhys()">⏸ Physics</button>
+       <button class="btn sm ghost" onclick="egResetView()">⟲ Reset view</button>
+       <button id="egClust" class="btn sm ghost" onclick="egCollapseAll()">⬢ Collapse owners</button>
+       <input id="egSearch" placeholder="Search entities…" oninput="egSearchQ(this.value)" onkeydown="if(event.key==='Enter')egSearchGo()" style="flex:1;min-width:160px;max-width:280px;padding:6px 10px;border:1px solid var(--line);border-radius:7px;font-size:12px">
+       <span id="egChips" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+     </div>
+     <div id="egTimeRow" style="display:none;gap:10px;align-items:center;margin-bottom:10px">
+       <button id="egPlay" class="btn sm" onclick="egReplay()">▶ Replay build-up</button>
+       <input type="range" id="egTimeSlider" min="0" max="1000" value="1000" oninput="egTimeSet(this.value)" style="flex:1;accent-color:#B8862B">
+       <span id="egTimeLbl" style="font-size:11px;color:#5A6472;min-width:190px;text-align:right"></span></div>
+     <div id="egWrap" style="position:relative;border-radius:10px;overflow:hidden">
+       <canvas id="egCanvas" style="display:block;width:100%;height:560px;cursor:grab"></canvas>
+       <div id="egTip" style="position:absolute;display:none;pointer-events:none;background:rgba(15,32,27,.94);color:#F7F5F0;padding:6px 10px;border-radius:7px;font-size:11px;border:1px solid rgba(232,199,120,.4);max-width:240px"></div>
+       <div id="egPanel" style="position:absolute;top:12px;right:12px;width:270px;display:none;background:rgba(12,26,22,.96);border:1px solid rgba(232,199,120,.35);border-radius:11px;padding:13px;color:#E9F0EC;font-size:12px;backdrop-filter:blur(6px)"></div>
+       <div id="egLegend" style="position:absolute;left:12px;bottom:10px;font-size:10px;color:#9DB8AE;display:flex;gap:12px;flex-wrap:wrap"></div>
+     </div></div>
+   <div id="eglists" class="muted">Loading concentration analytics…</div>`;
+  try{
+    const [net, ov] = await Promise.all([api2("/graph/network"), api2("/graph/overview")]);
+    _eg=ov; egListRender(); egInit(net);
+  }catch(e){ document.getElementById("eglists").innerHTML=`<div class="err">${esc(e.message)}</div>`; }
 };
-function egRender(){
-  const el=document.getElementById("egbody"); if(!el||!_eg)return; const st=_eg.stats;
+
+/* ---------- interactive brain map engine (canvas · 2D/3D force layout) ---------- */
+let EG=null;
+const EG_STYLE={
+  vendor:{c:"#3FA98E",shape:"circle",name:"Vendor"},
+  fourth_party:{c:"#E8C778",shape:"hex",name:"4th party"},
+  owner:{c:"#F7F5F0",shape:"diamond",name:"Owner"},
+  bu:{c:"#8FA89D",shape:"square",name:"Business unit"}};
+function egInit(net){
+  if(window._egRAF) cancelAnimationFrame(window._egRAF);
+  const canvas=document.getElementById("egCanvas"); if(!canvas) return;
+  const reduced=window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const nodes=net.nodes.map(n=>({...n,x:(Math.random()-.5)*700,y:(Math.random()-.5)*440,z:(Math.random()-.5)*500,vx:0,vy:0,vz:0,deg:0}));
+  const byId={}; nodes.forEach((n,i)=>{n.i=i;byId[n.id]=n;});
+  const links=net.links.filter(l=>byId[l.s]&&byId[l.t]).map(l=>({a:byId[l.s],b:byId[l.t],k:l.k}));
+  links.forEach(l=>{l.a.deg++;l.b.deg++;});
+  links.forEach(l=>{ if(l.k==="owns"){ l.b.ownerNode=l.a; (l.a.members=l.a.members||[]).push(l.b); } });
+  const topIds=new Set(nodes.slice().sort((a,b)=>b.deg-a.deg).slice(0,12).map(n=>n.id));
+  nodes.forEach(n=>{ n.sinceT = n.since? Date.parse(n.since) : -Infinity; });
+  links.forEach(l=>{ l.sinceT = l.since? Date.parse(l.since) : -Infinity; });
+  EG={canvas,ctx:canvas.getContext("2d"),nodes,links,byId,topIds,reduced,
+      mode3d:true,phys:true,zoom:1,panX:0,panY:0,ry:0,rx:-.28,alpha:1,
+      sel:null,hover:null,drag:null,dragBg:false,lastX:0,lastY:0,lastAct:0,q:"",
+      show:{vendor:true,fourth_party:true,owner:true,bu:true},counts:net.counts,
+      timeT:Infinity, tl:(net.timeline||null), playing:false};
+  nodes.forEach(n=>{n.r=(n.type==="vendor"?5:7)+Math.min(9,Math.sqrt(n.deg)*1.6); if(n.critical)n.r+=1.5;});
+  egChips(); egLegend(); egBind(); egResize(); egTimeInit(); egLoop();
+}
+function egChips(){
+  const c=EG.counts||{}; const map={vendor:c.vendors,fourth_party:c.fourth_parties,owner:c.owners,bu:c.business_units};
+  document.getElementById("egChips").innerHTML=Object.keys(EG_STYLE).map(t=>
+    `<button class="btn sm ${EG.show[t]?'':'ghost'}" style="font-size:10px;padding:3px 9px" onclick="egFilter('${t}')">${EG_STYLE[t].name} · ${map[t]??0}</button>`).join("");
+}
+function egLegend(){
+  document.getElementById("egLegend").innerHTML=Object.keys(EG_STYLE).map(t=>
+    `<span><span style="display:inline-block;width:9px;height:9px;border-radius:${EG_STYLE[t].shape==='circle'?'50%':'2px'};background:${EG_STYLE[t].c};margin-right:4px;vertical-align:-1px"></span>${EG_STYLE[t].name}</span>`).join("")+
+    `<span style="color:#D95757">● critical / SPOF halo</span><span>drag node · drag background to ${EG.mode3d?'orbit':'pan'} · scroll to zoom · click for details</span>`;
+}
+function egFilter(t){ EG.show[t]=!EG.show[t]; EG.alpha=Math.max(EG.alpha,.5); egChips(); }
+function egToggleMode(){ EG.mode3d=!EG.mode3d; EG.alpha=.7; document.getElementById("egMode").textContent=EG.mode3d?"◉ 3D orbit":"▦ 2D flat"; egLegend(); }
+function egTogglePhys(){ EG.phys=!EG.phys; document.getElementById("egPhys").textContent=EG.phys?"⏸ Physics":"▶ Physics"; if(EG.phys)EG.alpha=.6; }
+function egResetView(){ EG.zoom=1;EG.panX=0;EG.panY=0;EG.ry=0;EG.rx=-.28;EG.alpha=.8;EG.sel=null;egPanel(); }
+function egSearchQ(v){ EG.q=(v||"").toLowerCase(); }
+function egSearchGo(){ const m=EG.nodes.find(n=>EG.show[n.type]&&EG.q&&n.label.toLowerCase().includes(EG.q)); if(m)egSelect(m.i,true); }
+function egVisible(n){ return EG.show[n.type] && !n.folded && n.sinceT<=EG.timeT; }
+function egEff(n){ return n.folded||n; }
+function egResize(){
+  const c=EG.canvas,d=window.devicePixelRatio||1,w=c.clientWidth,h=560;
+  c.width=w*d; c.height=h*d; EG.ctx.setTransform(d,0,0,d,0,0); EG.w=w; EG.h=h;
+}
+function egProject(n){
+  let x=n.x,y=n.y,z=EG.mode3d?n.z:0;
+  if(EG.mode3d){
+    const cy=Math.cos(EG.ry),sy=Math.sin(EG.ry); let x2=x*cy - z*sy, z2=x*sy + z*cy;
+    const cx=Math.cos(EG.rx),sx=Math.sin(EG.rx); let y2=y*cx - z2*sx; z2=y*sx + z2*cx;
+    x=x2; y=y2; z=z2;
+  }
+  const p=900/(900 - Math.min(z,700));
+  return {sx:EG.w/2 + (x*p+EG.panX)*EG.zoom, sy:EG.h/2 + (y*p+EG.panY)*EG.zoom, s:p*EG.zoom, z};
+}
+function egTick(){
+  const N=EG.nodes.filter(egVisible), L=[];
+  for(const l of EG.links){ if(l.sinceT>EG.timeT) continue; const A=egEff(l.a),B=egEff(l.b);
+    if(A!==B&&egVisible(A)&&egVisible(B)) L.push({a:A,b:B,k:l.k}); }
+  const a=EG.alpha; if(a<=0.015) return;
+  for(let i=0;i<N.length;i++){ const n=N[i];
+    for(let j=i+1;j<N.length;j++){ const m=N[j];
+      let dx=n.x-m.x,dy=n.y-m.y,dz=n.z-m.z; let d2=dx*dx+dy*dy+dz*dz+40;
+      const f=Math.min(2600/d2,1.6)*a; const d=Math.sqrt(d2);
+      dx/=d;dy/=d;dz/=d; n.vx+=dx*f;n.vy+=dy*f;n.vz+=dz*f; m.vx-=dx*f;m.vy-=dy*f;m.vz-=dz*f; } }
+  for(const l of L){ const rest=l.k==="owns"?90:l.k==="consumes"?150:110;
+    let dx=l.b.x-l.a.x,dy=l.b.y-l.a.y,dz=l.b.z-l.a.z; const d=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;
+    const f=(d-rest)*0.02*a; dx/=d;dy/=d;dz/=d;
+    l.a.vx+=dx*f;l.a.vy+=dy*f;l.a.vz+=dz*f; l.b.vx-=dx*f;l.b.vy-=dy*f;l.b.vz-=dz*f; }
+  for(const n of N){ n.vx-=n.x*0.004*a; n.vy-=n.y*0.004*a; n.vz-=n.z*0.004*a;
+    if(!EG.mode3d) n.vz-=n.z*0.08;
+    n.vx=Math.max(-30,Math.min(30,n.vx));n.vy=Math.max(-30,Math.min(30,n.vy));n.vz=Math.max(-30,Math.min(30,n.vz));
+    if(n!==EG.drag){ n.x+=n.vx; n.y+=n.vy; n.z+=n.vz; }
+    if(!isFinite(n.x)||!isFinite(n.y)||!isFinite(n.z)){ n.x=(Math.random()-.5)*600;n.y=(Math.random()-.5)*400;n.z=(Math.random()-.5)*400;n.vx=n.vy=n.vz=0; }
+    n.vx*=0.85;n.vy*=0.85;n.vz*=0.85; }
+  EG.alpha*=0.995;
+}
+function egDrawShape(ctx,t,x,y,r){
+  ctx.beginPath();
+  if(t==="circle"){ ctx.arc(x,y,r,0,7); }
+  else if(t==="diamond"){ ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath(); }
+  else if(t==="square"){ ctx.rect(x-r*.85,y-r*.85,r*1.7,r*1.7); }
+  else { for(let i=0;i<6;i++){ const a=Math.PI/3*i-Math.PI/6; const px=x+r*Math.cos(a),py=y+r*Math.sin(a); i?ctx.lineTo(px,py):ctx.moveTo(px,py);} ctx.closePath(); }
+  ctx.fill();
+}
+function egDraw(){
+  const ctx=EG.ctx,w=EG.w,h=EG.h;
+  const g=ctx.createRadialGradient(w/2,h/2,60,w/2,h/2,Math.max(w,h)*.75);
+  g.addColorStop(0,"#12271F"); g.addColorStop(1,"#0A1613");
+  ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+  const sel=EG.sel,hov=EG.hover;
+  const neigh=new Set(); if(sel!=null){ const s=EG.nodes[sel]; EG.links.forEach(l=>{ const A=egEff(l.a),B=egEff(l.b); if(A===s&&B!==s)neigh.add(B.i); if(B===s&&A!==s)neigh.add(A.i); }); }
+  const P=EG.nodes.map(n=> egVisible(n)? egProject(n):null);
+  ctx.lineWidth=1;
+  for(const l of EG.links){
+    if(l.sinceT>EG.timeT) continue;
+    const A=egEff(l.a),B=egEff(l.b); if(A===B) continue;
+    const pa=P[A.i],pb=P[B.i]; if(!pa||!pb) continue;
+    const hot = sel!=null && (A.i===sel||B.i===sel);
+    const depth=Math.max(.12,Math.min(1,(pa.s+pb.s)/2));
+    ctx.strokeStyle=hot?"rgba(232,199,120,"+(0.75*depth)+")":"rgba(143,168,157,"+(0.26*depth+(EG.q?0:0.05))+")";
+    ctx.lineWidth=hot?1.6:0.8;
+    ctx.beginPath(); ctx.moveTo(pa.sx,pa.sy); ctx.lineTo(pb.sx,pb.sy); ctx.stroke();
+  }
+  const order=EG.nodes.map(n=>n.i).filter(i=>P[i]).sort((a,b)=>P[a].z-P[b].z);
+  ctx.textAlign="center"; ctx.font="10px Inter,system-ui,sans-serif";
+  for(const i of order){
+    const n=EG.nodes[i],p=P[i],st=EG_STYLE[n.type];
+    const r=Math.max(2.4,n.r*p.s*.55);
+    const isSel=i===sel,isHov=i===hov,isN=neigh.has(i);
+    const qDim = EG.q && !n.label.toLowerCase().includes(EG.q);
+    const selDim = sel!=null && !isSel && !isN;
+    let alpha=Math.max(.34,Math.min(1,.5+p.s*.45)); if(qDim||selDim)alpha*=.22;
+    ctx.globalAlpha=alpha;
+    const danger=(n.critical||n.spof);
+    if(danger){ ctx.fillStyle="rgba(217,87,87,.28)"; egDrawShape(ctx,st.shape,p.sx,p.sy,r+4); }
+    ctx.shadowColor=isSel||isHov?"#E8C778":(danger?"#D95757":st.c);
+    ctx.shadowBlur=isSel?22:isHov?16:danger?10:6;
+    ctx.fillStyle=isSel?"#E8C778":st.c;
+    const rr=(n.collapsed&&n.members)? r+Math.min(14,Math.sqrt(n.members.length)*2.4) : r;
+    egDrawShape(ctx,st.shape,p.sx,p.sy,rr);
+    ctx.shadowBlur=0;
+    if(n.collapsed&&n.members){ ctx.globalAlpha=1; ctx.fillStyle="#14302A"; ctx.font="bold 9px Inter,sans-serif";
+      ctx.fillText(String(n.members.length), p.sx, p.sy+3); ctx.font="10px Inter,system-ui,sans-serif"; }
+    if(isSel||isHov||isN||(EG.topIds.has(n.id)&&EG.zoom>=.75&&!qDim&&sel==null)){
+      ctx.globalAlpha=Math.min(1,alpha+.35); ctx.fillStyle="#DCE8E2";
+      ctx.fillText(n.label.length>26?n.label.slice(0,25)+"…":n.label, p.sx, p.sy-r-5);
+    }
+  }
+  ctx.globalAlpha=1;
+}
+function egLoop(){
+  const c=document.getElementById("egCanvas");
+  if(!c||!c.isConnected||!EG){ if(window._egRAF)cancelAnimationFrame(window._egRAF); window._egRAF=null; return; }
+  if(EG.phys) egTick();
+  if(EG.mode3d && !EG.reduced && !EG.dragBg && EG.drag==null && (performance.now()-EG.lastAct>2600)) EG.ry+=0.0016;
+  egDraw();
+  window._egRAF=requestAnimationFrame(egLoop);
+}
+function egPick(mx,my){
+  let best=null,bd=1e9;
+  EG.nodes.forEach(n=>{ if(!egVisible(n))return; const p=egProject(n);
+    const d=Math.hypot(p.sx-mx,p.sy-my); const r=Math.max(9,n.r*p.s*.55+4);
+    if(d<r&&d<bd){bd=d;best=n.i;} });
+  return best;
+}
+function egUnrotate(dx,dy){
+  if(!EG.mode3d) return [dx,dy,0];
+  const cx=Math.cos(-EG.rx),sx=Math.sin(-EG.rx); let y=dy*cx, z=dy*sx;
+  const cy=Math.cos(-EG.ry),sy=Math.sin(-EG.ry); const x=dx*cy - z*sy; z=dx*sy + z*cy;
+  return [x,y,z];
+}
+function egBind(){
+  const c=EG.canvas, tip=document.getElementById("egTip");
+  const pos=e=>{ const r=c.getBoundingClientRect(); return [e.clientX-r.left,e.clientY-r.top]; };
+  c.onpointerdown=e=>{ const [mx,my]=pos(e); const hit=egPick(mx,my); EG.lastAct=performance.now();
+    if(hit!=null){ EG.drag=EG.nodes[hit]; c.style.cursor="grabbing"; }
+    else { EG.dragBg=true; c.style.cursor="grabbing"; }
+    EG.lastX=mx; EG.lastY=my; c.setPointerCapture(e.pointerId); EG.downAt=[mx,my]; };
+  c.onpointermove=e=>{ const [mx,my]=pos(e); const dx=mx-EG.lastX, dy=my-EG.lastY; EG.lastX=mx; EG.lastY=my;
+    if(EG.drag){ const [wx,wy,wz]=egUnrotate(dx/EG.zoom,dy/EG.zoom); EG.drag.x+=wx;EG.drag.y+=wy;EG.drag.z+=wz; EG.alpha=Math.max(EG.alpha,.25); EG.lastAct=performance.now(); }
+    else if(EG.dragBg){ EG.lastAct=performance.now();
+      if(EG.mode3d){ EG.ry+=dx*0.005; EG.rx=Math.max(-1.2,Math.min(1.2,EG.rx+dy*0.005)); }
+      else { EG.panX+=dx/EG.zoom; EG.panY+=dy/EG.zoom; } }
+    else { const hit=egPick(mx,my); EG.hover=hit;
+      if(hit!=null){ const n=EG.nodes[hit];
+        tip.style.display="block"; tip.style.left=(mx+14)+"px"; tip.style.top=(my+10)+"px";
+        tip.innerHTML=`<b>${esc(n.label)}</b><br><span style="color:#9DB8AE">${EG_STYLE[n.type].name} · ${n.deg} connection${n.deg===1?"":"s"}${n.critical?" · <span style=\'color:#FF8F8F\'>critical</span>":""}${n.spof?" · <span style=\'color:#FF8F8F\'>SPOF</span>":""}</span>`;
+        c.style.cursor="pointer";
+      } else { tip.style.display="none"; c.style.cursor="grab"; } } };
+  c.onpointerup=e=>{ const [mx,my]=pos(e);
+    const moved=EG.downAt&&Math.hypot(mx-EG.downAt[0],my-EG.downAt[1])>4;
+    if(EG.drag&&!moved){ egSelect(EG.drag.i); }
+    else if(!EG.drag&&!moved){ EG.sel=null; egPanel(); }
+    EG.drag=null; EG.dragBg=false; c.style.cursor="grab"; };
+  c.onwheel=e=>{ e.preventDefault(); EG.lastAct=performance.now();
+    EG.zoom=Math.max(.3,Math.min(3.2,EG.zoom*(e.deltaY<0?1.12:0.9))); };
+  c.ondblclick=()=>egResetView();
+  window.addEventListener("resize",()=>{ if(EG&&document.getElementById("egCanvas"))egResize(); },{passive:true});
+}
+function egTimeInit(){
+  const row=document.getElementById("egTimeRow"); if(!row) return;
+  if(!EG.tl){ row.style.display="none"; return; }
+  EG.tMin=Date.parse(EG.tl.min); EG.tMax=Date.parse(EG.tl.max)+86400000;
+  row.style.display="flex"; EG.timeT=Infinity;
+  const s=document.getElementById("egTimeSlider"); if(s)s.value=1000;
+  egTimeLbl();
+}
+function egTimeSet(v){
+  if(!EG.tl) return;
+  EG.playing=false; const b=document.getElementById("egPlay"); if(b)b.textContent="▶ Replay build-up";
+  const f=(+v)/1000;
+  EG.timeT = f>=1? Infinity : EG.tMin + (EG.tMax-EG.tMin)*f;
+  EG.alpha=Math.max(EG.alpha,.35); EG.lastAct=performance.now(); egTimeLbl();
+}
+function egTimeLbl(){
+  const el=document.getElementById("egTimeLbl"); if(!el) return;
+  const vis=EG.nodes.filter(n=>n.type==="vendor"&&egVisible(n)).length;
+  const lk=EG.links.filter(l=>l.sinceT<=EG.timeT).length;
+  const when = EG.timeT===Infinity? "today" : new Date(EG.timeT).toISOString().slice(0,10);
+  el.textContent=`${when} · ${vis} vendors · ${lk} links (engagement-dated)`;
+}
+function egReplay(){
+  if(!EG.tl) return;
+  const b=document.getElementById("egPlay");
+  if(EG.playing){ EG.playing=false; if(b)b.textContent="▶ Replay build-up"; return; }
+  EG.playing=true; if(b)b.textContent="⏸ Pause";
+  const t0=performance.now(), dur=9000;
+  EG.timeT=EG.tMin; EG.alpha=.9;
+  (function step(){
+    if(!EG||!EG.playing||!document.getElementById("egCanvas")) return;
+    const f=Math.min(1,(performance.now()-t0)/dur);
+    EG.timeT=EG.tMin+(EG.tMax-EG.tMin)*f;
+    const s=document.getElementById("egTimeSlider"); if(s)s.value=Math.round(f*1000);
+    EG.alpha=Math.max(EG.alpha,.22); egTimeLbl();
+    if(f<1){ requestAnimationFrame(step); }
+    else { EG.playing=false; EG.timeT=Infinity; if(s)s.value=1000; if(b)b.textContent="▶ Replay build-up"; egTimeLbl(); }
+  })();
+}
+function egCollapse(i){
+  const o=EG.nodes[i]; if(!o||o.type!=="owner"||!o.members) return;
+  o.collapsed=!o.collapsed;
+  o.members.forEach(m=>{ m.folded=o.collapsed?o:null; if(o.collapsed&&EG.sel===m.i){ EG.sel=o.i; } });
+  EG.alpha=Math.max(EG.alpha,.5); EG.lastAct=performance.now(); egPanel();
+}
+function egCollapseAll(){
+  const owners=EG.nodes.filter(n=>n.type==="owner"&&n.members&&n.members.length);
+  const target=!owners.every(o=>o.collapsed);
+  owners.forEach(o=>{ o.collapsed=target; o.members.forEach(m=>{ m.folded=target?o:null; if(target&&EG.sel===m.i)EG.sel=o.i; }); });
+  const b=document.getElementById("egClust"); if(b) b.textContent=target?"⬡ Expand owners":"⬢ Collapse owners";
+  EG.alpha=.7; EG.lastAct=performance.now(); egPanel();
+}
+function egSelect(i,center){
+  EG.sel=i; EG.alpha=Math.max(EG.alpha,.2); EG.lastAct=performance.now();
+  if(center&&!EG.mode3d){ const n=EG.nodes[i]; EG.panX=-n.x; EG.panY=-n.y; }
+  egPanel();
+}
+function egPanel(){
+  const p=document.getElementById("egPanel"); if(!p)return;
+  if(EG.sel==null){ p.style.display="none"; return; }
+  const n=EG.nodes[EG.sel], st=EG_STYLE[n.type];
+  const nb=[]; const nbSeen=new Set();
+  EG.links.forEach(l=>{ const A=egEff(l.a),B=egEff(l.b); let m=null;
+    if(A===n&&B!==n)m=B; if(B===n&&A!==n)m=A;
+    if(m&&!nbSeen.has(m.i)&&egVisible(m)){ nbSeen.add(m.i); nb.push(m); } });
+  let act="";
+  if(n.type==="vendor") act=`<button class="btn sm" onclick="openV360('${n.vendor_id}')">Open Vendor 360 →</button>`;
+  else if(n.type==="fourth_party") act=`<button class="btn sm" onclick="egContagion('fourth_party','${n.fourth_party_id}')">Contagion →</button>`;
+  else if(n.type==="owner") act=`<button class="btn sm" onclick="egContagion('owner','${String(n.owner||n.label).replace(/'/g,"")}')">Contagion →</button>`;
+  else act=`<button class="btn sm" onclick="goTo('exposure')">BU exposure →</button>`;
+  if(n.type==="owner"&&n.members&&n.members.length)
+    act=`<button class="btn sm ghost" onclick="egCollapse(${n.i})">${n.collapsed?"⬡ Expand":"⬢ Collapse"} cluster (${n.members.length})</button> `+act;
+  p.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+    <div><span style="font-size:9px;letter-spacing:.14em;color:${st.c};text-transform:uppercase">${st.name}</span>
+    <div style="font-weight:700;font-size:13px;margin:2px 0 4px;color:#F7F5F0">${esc(n.label)}</div></div>
+    <button class="btn sm ghost" style="padding:1px 7px" onclick="EG.sel=null;egPanel()">✕</button></div>
+    <div style="color:#9DB8AE;line-height:1.55">${n.deg} connection${n.deg===1?"":"s"}
+    ${n.critical?'<br><span style="color:#FF8F8F">● Critical vendor</span>':''}${n.spof?'<br><span style="color:#FF8F8F">● Single point of failure</span>':''}
+    ${n.country?'<br>HQ · '+esc(n.country):''}${n.service?'<br>'+esc(n.service):''}${n.engagements?'<br>'+n.engagements+' engagement(s)':''}</div>
+    <div style="margin:9px 0">${act}</div>
+    ${nb.length?`<div style="font-size:9px;letter-spacing:.12em;color:#9DB8AE;text-transform:uppercase;margin-bottom:4px">Connected (${nb.length})</div>
+    <div style="max-height:150px;overflow:auto">${nb.slice(0,14).map(m=>`<div style="padding:2px 0;cursor:pointer;color:#DCE8E2" onclick="egSelect(${m.i})">· ${esc(m.label.length>28?m.label.slice(0,27)+"…":m.label)}</div>`).join("")}${nb.length>14?`<div style="color:#9DB8AE">+ ${nb.length-14} more</div>`:""}</div>`:""}`;
+  p.style.display="block";
+}
+function egListRender(){
+  const el=document.getElementById("eglists"); if(!el||!_eg)return; const st=_eg.stats;
   let html=`<div class="grid g4" style="gap:10px;margin-bottom:14px">
     <div class="card stat"><div class="v">${st.vendors}</div><div class="l">Vendors in graph</div></div>
     <div class="card stat"><div class="v">${st.shared_fourth_parties}</div><div class="l">Shared sub-providers</div></div>
@@ -867,6 +1158,7 @@ function egRender(){
   }
   el.innerHTML=html;
 }
+
 async function egContagion(type,id){
   try{ const r=await api2("/graph/contagion",{method:"POST",body:JSON.stringify({node_type:type,node_id:id})});
     modalFull(`<div style="display:flex;justify-content:space-between;align-items:center;max-width:1060px;width:100%;margin:0 auto 12px">
@@ -6336,7 +6628,290 @@ if(tok()){ (async()=>{ try{
   document.getElementById("login").classList.add("hidden");
   document.getElementById("app").classList.remove("hidden");
   try{ const me=await api("/me"); window._role=me.role;
-    if(me.role==="admin"){ const nm=document.getElementById("navMethodology"); if(nm) nm.style.display=""; const nc=document.getElementById("navConfig"); if(nc) nc.style.display=""; }
+    if(me.role==="admin"){ const nm=document.getElementById("navMethodology"); if(nm) nm.style.display=""; const nc=document.getElementById("navConfig"); if(nc) nc.style.display=""; const na=document.getElementById("navAdminChange"); if(na) na.style.display=""; if(window.loadLayout) window.loadLayout(); }
     document.getElementById("whoName").textContent=me.username; document.getElementById("whoRole").textContent=me.role.toUpperCase(); }catch(_){}
   V.home(); initLang(); loadNavOrder();
 }catch(_){ logout(); } })(); }
+/* ===================== CONTENT STUDIO ("Admin Change") ===================== */
+/* DB-backed override of any catalogued hardcoded UI string. The effective
+   default->override map is applied by a text-node + placeholder pass, so an
+   override reaches the string wherever it is rendered (static nav or any view). */
+window.__BRO_OV__ = window.__BRO_OV__ || {};
+window._csPreview = false;              // preview mode records originals so edits can be reverted
+var _csTouched = [];                    // [{node, attr, orig}] recorded while previewing
+function _csRecord(node, attr, orig){ if(window._csPreview) _csTouched.push({node:node, attr:attr, orig:orig}); }
+function _csRestoreOriginals(){
+  _csTouched.forEach(function(r){
+    try{ if(r.attr === "#text"){ if(r.node) r.node.nodeValue = r.orig; }
+         else if(r.node && r.node.setAttribute){ r.node.setAttribute(r.attr, r.orig); } }catch(e){}
+  });
+  _csTouched = [];
+}
+function _csSwap(node){
+  var OV = window.__BRO_OV__; if(!OV) return;
+  if(node.nodeType === 3){
+    var t = node.nodeValue, k = t.trim();
+    if(k && OV[k] !== undefined && OV[k] !== k){ _csRecord(node, "#text", t); node.nodeValue = t.replace(k, OV[k]); }
+  } else if(node.nodeType === 1){
+    if(node.getAttribute){
+      ["placeholder","title"].forEach(function(a){
+        var av = node.getAttribute(a);
+        if(av && OV[av.trim()] !== undefined && OV[av.trim()] !== av.trim()){ _csRecord(node, a, av); node.setAttribute(a, OV[av.trim()]); }
+      });
+    }
+    var ch = node.childNodes;
+    if(ch) for(var i=0;i<ch.length;i++) _csSwap(ch[i]);
+  }
+}
+function _csApply(root){ try{ _csSwap(root||document.body); }catch(e){} }
+window._csSavedOV = {};
+window.loadContentOverrides = async function(){
+  try{ var r = await fetch("/api/v2/content/overrides").then(function(x){return x.json();});
+       window.__BRO_OV__ = (r && r.overrides) || {}; window._csSavedOV = Object.assign({}, window.__BRO_OV__); }catch(e){}
+  _csApply(document.body);
+};
+/* Apply pending (unsaved) edits over the saved baseline, live across the app. */
+window.csApplyPreview = function(buffer){
+  _csRestoreOriginals();
+  var merged = Object.assign({}, window._csSavedOV || {});
+  for(var def in buffer){ if(buffer[def] === "" || buffer[def] === def){ delete merged[def]; } else { merged[def] = buffer[def]; } }
+  window.__BRO_OV__ = merged;
+  _csApply(document.body);
+};
+(function(){
+  try{
+    var mo = new MutationObserver(function(muts){
+      muts.forEach(function(m){ if(m.addedNodes) m.addedNodes.forEach(function(n){ _csSwap(n); }); });
+    });
+    if(document.body) mo.observe(document.body,{childList:true,subtree:true});
+  }catch(e){}
+  if(document.readyState !== "loading") window.loadContentOverrides();
+  else document.addEventListener("DOMContentLoaded", function(){ window.loadContentOverrides(); });
+})();
+
+let _csData=null, _csMap={}, _csBuf={};
+V.adminchange = async () => {
+  const view=document.getElementById("view");
+  window._csPreview=false; _csBuf={};
+  view.innerHTML=`<div class="top"><div><h1>Admin Change</h1>
+    <div class="sub">Edit the application's wording (Content) or restructure the navigation (Layout) — no code changes. Both apply live for everyone.</div></div></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button id="csTabContent" class="btn" onclick="csTab('content')">✎ Content</button>
+      <button id="csTabLayout" class="btn ghost" onclick="csTab('layout')">▤ Layout</button></div>
+    <div id="csContentPane">
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">
+        <button id="csPreviewBtn" class="btn ghost" onclick="csTogglePreview()">▶ Preview: Off</button>
+        <button class="btn" onclick="csAddCustom()">+ Custom string</button>
+        <button class="btn ghost" onclick="csResetAll()">Reset all</button></div>
+      <div id="csBanner" style="display:none;background:#FBF1DC;border:1px solid #E8C778;border-radius:8px;padding:9px 13px;margin-bottom:10px;font-size:13px;color:#14302A"></div>
+      <div class="card"><input id="csSearch" placeholder="Search labels, keys or text…" oninput="csFilter(this.value)" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;font-size:14px">
+      <div id="csMeta" class="muted" style="margin-top:7px"></div></div>
+      <div id="csBody" class="muted">Loading…</div></div>
+    <div id="csLayoutPane" style="display:none">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button class="btn ghost" onclick="layoutResetAll()">Reset layout</button></div>
+      <div class="card muted" style="margin-bottom:10px">Show, hide or reorder navigation items and groups. Changes apply live for everyone. Admin-only items are governed by role and not listed here. This restructures the shell navigation — deeper page-layout editing remains code-controlled.</div>
+      <div id="csLayoutBody" class="muted">Loading…</div></div>`;
+  await csLoad();
+};
+function csTab(which){
+  document.getElementById("csContentPane").style.display = which==="content"?"":"none";
+  document.getElementById("csLayoutPane").style.display = which==="layout"?"":"none";
+  document.getElementById("csTabContent").className = which==="content"?"btn":"btn ghost";
+  document.getElementById("csTabLayout").className = which==="layout"?"btn":"btn ghost";
+  if(which==="layout") csLoadLayout();
+}
+async function csLoad(){
+  try{ _csData=await api2("/content/registry"); }
+  catch(e){ const b=document.getElementById("csBody"); if(b) b.innerHTML=`<div class="err">${esc(e.message)}</div>`; return; }
+  const meta=document.getElementById("csMeta");
+  if(meta) meta.textContent=`${_csData.total} catalogued strings · ${_csData.overridden} overridden`+(_csData.custom?` · ${_csData.custom} custom`:``);
+  csRender(document.getElementById("csSearch")?document.getElementById("csSearch").value:"");
+}
+function csRender(q){
+  q=(q||"").toLowerCase(); _csMap={}; let html=""; let idn=0;
+  for(const g of _csData.groups){
+    const items=g.items.filter(it=> !q || (it.label+" "+it.key+" "+it.value+" "+it.default).toLowerCase().indexOf(q)>=0);
+    if(!items.length) continue;
+    html+=`<div class="card"><div class="card-label">${esc(g.group)} <span class="muted">· ${items.length}</span></div>`;
+    for(const it of items){
+      const id="csi"+(idn++); _csMap[id]=it;
+      const cur = _csBuf[it.key]!==undefined ? _csBuf[it.key].value : it.value;
+      const inp = it.multiline
+        ? `<textarea id="${id}" rows="2" oninput="csEdit('${id}')" style="width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:13px">${esc(cur)}</textarea>`
+        : `<input id="${id}" value="${esc(cur)}" oninput="csEdit('${id}')" style="width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-size:13px">`;
+      html+=`<div style="display:grid;grid-template-columns:1fr 1.4fr auto;gap:10px;align-items:start;padding:7px 0;border-bottom:1px solid var(--line)">
+        <div><div style="font-weight:600;font-size:12px">${esc(it.label)} ${it.overridden?'<span style="font-size:10px;color:#B8862B;font-weight:700">● overridden</span>':''}</div>
+        <div class="muted" style="font-size:10px;word-break:break-all">${esc(it.key)}</div></div>
+        <div>${inp}</div>
+        <div style="display:flex;gap:5px"><button class="btn sm" onclick="csSave('${id}')">Save</button>
+        ${it.overridden?`<button class="btn sm ghost" onclick="csReset('${id}')">Reset</button>`:''}</div></div>`;
+    }
+    html+="</div>";
+  }
+  const body=document.getElementById("csBody");
+  if(body) body.innerHTML=html||'<div class="card muted">No matches.</div>';
+}
+function csFilter(v){ csRender(v); }
+async function csSave(id){
+  const it=_csMap[id]; const el=document.getElementById(id); if(!it||!el)return;
+  try{ await api2("/content/item/"+encodeURIComponent(it.key),{method:"PUT",body:JSON.stringify({value:el.value})});
+       flash("Saved"); await window.loadContentOverrides(); await csLoad(); }
+  catch(e){ flash(e.message); }
+}
+async function csReset(id){
+  const it=_csMap[id]; if(!it)return;
+  try{ await api2("/content/item/"+encodeURIComponent(it.key)+"/reset",{method:"POST",body:"{}"});
+       flash("Reset to default"); await window.loadContentOverrides(); await csLoad(); }
+  catch(e){ flash(e.message); }
+}
+async function csResetAll(){
+  if(!confirm("Reset ALL content to built-in defaults?"))return;
+  try{ await api2("/content/reset-all",{method:"POST",body:"{}"}); flash("All reset");
+       await window.loadContentOverrides(); await csLoad(); }
+  catch(e){ flash(e.message); }
+}
+async function csAddCustom(){
+  const src=prompt("Exact text in the app you want to replace:"); if(!src)return;
+  const val=prompt("Replace it with:"); if(val==null)return;
+  try{ await api2("/content/custom",{method:"POST",body:JSON.stringify({source_text:src,value:val})});
+       flash("Custom override added"); await window.loadContentOverrides(); await csLoad(); }
+  catch(e){ flash(e.message); }
+}
+
+/* ---- Content Studio: live preview (change b) ---- */
+function csEdit(id){
+  const it=_csMap[id], el=document.getElementById(id); if(!it||!el) return;
+  const v=el.value;
+  if(v===it.default) delete _csBuf[it.key]; else _csBuf[it.key]={def:it.default,value:v};
+  if(window._csPreview){ csApplyPreviewFromBuf(); }
+  csRenderBanner();
+}
+function csApplyPreviewFromBuf(){
+  const m={}; for(const k in _csBuf){ m[_csBuf[k].def]=_csBuf[k].value; }
+  window.csApplyPreview(m);
+}
+function csTogglePreview(){
+  window._csPreview=!window._csPreview;
+  const btn=document.getElementById("csPreviewBtn");
+  if(window._csPreview){
+    if(btn){ btn.textContent="⏸ Preview: On"; btn.className="btn"; }
+    csApplyPreviewFromBuf();
+  } else {
+    if(btn){ btn.textContent="▶ Preview: Off"; btn.className="btn ghost"; }
+    _csRestoreOriginals(); window.loadContentOverrides();
+  }
+  csRenderBanner();
+}
+function csRenderBanner(){
+  const b=document.getElementById("csBanner"); if(!b) return;
+  const n=Object.keys(_csBuf).length;
+  if(window._csPreview){
+    b.style.display="";
+    b.innerHTML=`<b>Preview mode</b> — ${n} unsaved change${n===1?'':'s'} shown live across the app. `+
+      `<button class="btn sm" onclick="csSavePreviewed()">Save all previewed (${n})</button> `+
+      `<button class="btn sm ghost" onclick="csTogglePreview()">Exit preview</button>`;
+  } else if(n>0){
+    b.style.display="";
+    b.innerHTML=`${n} unsaved edit${n===1?'':'s'} buffered. <button class="btn sm" onclick="csTogglePreview()">▶ Preview live</button> `+
+      `<button class="btn sm" onclick="csSavePreviewed()">Save all (${n})</button> `+
+      `<button class="btn sm ghost" onclick="csDiscardBuf()">Discard</button>`;
+  } else { b.style.display="none"; b.innerHTML=""; }
+}
+function csDiscardBuf(){ _csBuf={}; if(window._csPreview) csTogglePreview(); else { csRenderBanner(); csRender(document.getElementById("csSearch")?document.getElementById("csSearch").value:""); } }
+async function csSavePreviewed(){
+  const keys=Object.keys(_csBuf); if(!keys.length){ flash("No changes to save"); return; }
+  try{
+    for(const k of keys){ await api2("/content/item/"+encodeURIComponent(k),{method:"PUT",body:JSON.stringify({value:_csBuf[k].value})}); }
+    _csBuf={}; window._csPreview=false; _csTouched=[];
+    const btn=document.getElementById("csPreviewBtn"); if(btn){ btn.textContent="▶ Preview: Off"; btn.className="btn ghost"; }
+    flash(keys.length+" change(s) saved"); await window.loadContentOverrides(); await csLoad(); csRenderBanner();
+  }catch(e){ flash(e.message); }
+}
+
+/* ===================== NAV & LAYOUT CONFIG (structural — change c) ===================== */
+window.__BRO_LAYOUT__ = window.__BRO_LAYOUT__ || {items:{},groups:{}};
+function _navGroupSlug(el){
+  return (el.textContent||"").trim().toLowerCase().replace(/&/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,40);
+}
+function applyLayout(cfg){
+  const nav=document.getElementById("nav"); if(!nav||!cfg) return;
+  const items=cfg.items||{}, groups=cfg.groups||{};
+  const groupDivs=Array.from(nav.querySelectorAll(".nav-group"));
+  const segs=[];
+  groupDivs.forEach((div)=>{
+    const label=div.querySelector(".nav-group-label");
+    const slug=label?_navGroupSlug(label):"top";
+    const anchors=Array.from(div.querySelectorAll("a[data-v]"));
+    anchors.forEach(a=>{ if(a.dataset.origDisplay===undefined) a.dataset.origDisplay=a.style.display||""; });
+    anchors.forEach((a,idx)=>{ const dv=a.getAttribute("data-v"); a.__ord=(items[dv]&&items[dv].order!==undefined)?items[dv].order:idx; });
+    const sorted=anchors.map((a,i)=>({a,i})).sort((x,y)=>(x.a.__ord-y.a.__ord)||(x.i-y.i)).map(o=>o.a);
+    const ghid=(groups[slug]||{}).hidden;
+    let anyVisible=false;
+    sorted.forEach(a=>{
+      const dv=a.getAttribute("data-v");
+      const hid=ghid||(items[dv]&&items[dv].hidden);
+      if(hid){ a.style.display="none"; a.dataset.layoutHidden="1"; }
+      else if(a.dataset.layoutHidden==="1"){ a.style.display=a.dataset.origDisplay||""; delete a.dataset.layoutHidden; }
+      if(a.style.display!=="none") anyVisible=true;
+    });
+    sorted.forEach(a=> div.appendChild(a));           // reorder anchors within the group
+    if(label) div.insertBefore(label, div.firstChild);// keep the group label on top
+    div.style.display=(ghid || !anyVisible)?"none":""; // hide whole group if hidden/empty
+    segs.push({div, ord:(groups[slug]||{}).order});
+  });
+  segs.map((s,i)=>({s,i})).sort((x,y)=>((x.s.ord!==undefined?x.s.ord:x.i)-(y.s.ord!==undefined?y.s.ord:y.i))||(x.i-y.i))
+      .forEach(o=> nav.appendChild(o.s.div));          // reorder groups within the nav
+}
+window.loadLayout = async function(){
+  try{ const r=await fetch("/api/v2/layout/config").then(x=>x.json()); window.__BRO_LAYOUT__=r||{items:{},groups:{}}; }catch(e){}
+  applyLayout(window.__BRO_LAYOUT__);
+};
+
+/* ---- Content Studio: Layout editor (change c) ---- */
+let _layoutCat=null;
+async function csLoadLayout(){
+  try{ _layoutCat=await api2("/layout/catalog"); }
+  catch(e){ const b=document.getElementById("csLayoutBody"); if(b) b.innerHTML=`<div class="err">${esc(e.message)}</div>`; return; }
+  csRenderLayout();
+}
+function csRenderLayout(){
+  let html="";
+  for(const g of _layoutCat.groups){
+    html+=`<div class="card"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div class="card-label">${esc(g.label)} <span class="muted">· ${g.items.length}</span></div>
+      <label style="font-size:12px;cursor:pointer"><input type="checkbox" ${g.hidden?"":"checked"} onchange="layoutGroup('${g.slug}',this.checked)"> Group visible</label></div>`;
+    g.items.forEach((it,idx)=>{
+      html+=`<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--line)">
+        <label style="flex:1;font-size:13px;cursor:pointer${it.hidden?';opacity:.5':''}"><input type="checkbox" ${it.hidden?"":"checked"} onchange="layoutItem('${it.datav}',this.checked)"> ${esc(it.label)} <span class="muted" style="font-size:10px">${esc(it.datav)}</span></label>
+        <button class="btn sm ghost" ${idx===0?"disabled":""} onclick="layoutMove('${g.slug}','${it.datav}',-1)">↑</button>
+        <button class="btn sm ghost" ${idx===g.items.length-1?"disabled":""} onclick="layoutMove('${g.slug}','${it.datav}',1)">↓</button></div>`;
+    });
+    html+="</div>";
+  }
+  const b=document.getElementById("csLayoutBody"); if(b) b.innerHTML=html||'<div class="card muted">No nav items.</div>';
+}
+async function layoutItem(datav,visible){
+  try{ await api2("/layout/item/"+encodeURIComponent(datav),{method:"PUT",body:JSON.stringify({hidden:!visible})});
+       await window.loadLayout(); await csLoadLayout(); flash(visible?"Shown":"Hidden"); }
+  catch(e){ flash(e.message); }
+}
+async function layoutGroup(slug,visible){
+  try{ await api2("/layout/group/"+encodeURIComponent(slug),{method:"PUT",body:JSON.stringify({hidden:!visible})});
+       await window.loadLayout(); await csLoadLayout(); flash(visible?"Group shown":"Group hidden"); }
+  catch(e){ flash(e.message); }
+}
+async function layoutMove(slug,datav,dir){
+  const g=_layoutCat.groups.find(x=>x.slug===slug); if(!g)return;
+  const order=g.items.map(x=>x.datav); const i=order.indexOf(datav); const j=i+dir;
+  if(j<0||j>=order.length)return;
+  order.splice(i,1); order.splice(j,0,datav);
+  try{ await api2("/layout/reorder",{method:"POST",body:JSON.stringify({slug,order})});
+       await window.loadLayout(); await csLoadLayout(); }
+  catch(e){ flash(e.message); }
+}
+async function layoutResetAll(){
+  if(!confirm("Reset all navigation layout to defaults?"))return;
+  try{ await api2("/layout/reset-all",{method:"POST",body:"{}"});
+       await window.loadLayout(); await csLoadLayout(); flash("Layout reset"); }
+  catch(e){ flash(e.message); }
+}

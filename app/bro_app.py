@@ -825,6 +825,40 @@ class LearningIn(BaseModel):
     source_vendor: Optional[str] = None
 
 
+class ConnectorConfigIn(BaseModel):
+    enabled: Optional[bool] = None
+    base_url: Optional[str] = None
+    secret_name: Optional[str] = None
+    config: Optional[dict] = None
+
+
+class ConnectorSyncIn(BaseModel):
+    vendor_id: Optional[str] = None       # one vendor; omit for all
+    vendor_ids: Optional[list] = None     # explicit set
+
+
+class ContentSetIn(BaseModel):
+    value: str
+
+
+class ContentCustomIn(BaseModel):
+    source_text: str
+    value: str
+
+
+class ContentImportIn(BaseModel):
+    data: dict
+
+class LayoutItemIn(BaseModel):
+    hidden: Optional[bool] = None
+    order: Optional[int] = None
+
+
+class LayoutReorderIn(BaseModel):
+    slug: str
+    order: list
+
+
 def create_app(db_url: Optional[str] = None) -> FastAPI:
     engine = make_engine(db_url or "sqlite:///:memory:")
     # ensure registry models are imported so their tables register on Base
@@ -837,6 +871,9 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
     from .features import performance_models as _perf  # noqa: F401  (SLA + performance issues)
     from .features import platform_docs as _pdocs  # noqa: F401  (SOP/TDA + version history)
     from .features import learnings as _learn  # noqa: F401  (platform learnings log)
+    from .features import integrations as _integ  # noqa: F401  (external connector suite)
+    from .features import content as _content  # noqa: F401  (content studio overrides)
+    from .features import layout as _layout  # noqa: F401  (nav & layout config)
     # Dev/demo bootstrap creates tables directly. In production set
     # BRO_DB_AUTO_CREATE=0 and manage schema with Alembic (`alembic upgrade head`).
     if _os.environ.get("BRO_DB_AUTO_CREATE", "1") != "0":
@@ -890,12 +927,19 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
 
     app = FastAPI(title="BRO Risk Oracle", version=_platform_version())
 
+    # transfer efficiency: compress large responses (the app bundle, JSON payloads)
+    from fastapi.middleware.gzip import GZipMiddleware
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+
     @app.middleware("http")
     async def _security_headers(request, call_next):
         resp = await call_next(request)
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        resp.headers.setdefault("Permissions-Policy",
+                                "camera=(), microphone=(), geolocation=(), payment=()")
+        resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         resp.headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
@@ -905,6 +949,9 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
         if SEC.is_production():
             resp.headers.setdefault("Strict-Transport-Security",
                                     "max-age=31536000; includeSubDomains")
+        # static assets are version-busted (?v=) so they can be cached hard
+        if request.url.path.startswith("/static"):
+            resp.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
         return resp
 
     def db() -> Session:
@@ -2103,21 +2150,20 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
     def search_vendors(q: Optional[str] = None, tier: Optional[str] = None,
                        critical: Optional[bool] = None,
                        s: Session = Depends(db), u: User = Depends(require("vendor.view"))):
-        stmt = select(Vendor)
-        rows = s.scalars(stmt).all()
-        out = []
-        for v in rows:
-            if "|archived" in (v.ext_ref or ""):
-                continue
-            if q and q.lower() not in v.name.lower():
-                continue
-            if tier and v.tier != tier:
-                continue
-            if critical is not None and v.is_critical != critical:
-                continue
-            out.append({"vendor_id": v.id, "name": v.name, "tier": v.tier,
-                        "is_critical": v.is_critical})
-        return out
+        # SQL-side filtering + cap — scales to large registers (no full-table
+        # Python scan). Archived rows carry '|archived' in ext_ref.
+        from sqlalchemy import or_ as _or
+        stmt = select(Vendor).where(
+            _or(Vendor.ext_ref.is_(None), Vendor.ext_ref.notlike("%|archived%")))
+        if q:
+            stmt = stmt.where(Vendor.name.ilike(f"%{q.strip()}%"))
+        if tier:
+            stmt = stmt.where(Vendor.tier == tier)
+        if critical is not None:
+            stmt = stmt.where(Vendor.is_critical == critical)
+        stmt = stmt.order_by(Vendor.name).limit(500)
+        return [{"vendor_id": v.id, "name": v.name, "tier": v.tier,
+                 "is_critical": v.is_critical} for v in s.scalars(stmt).all()]
 
     # ---- Vendor: remove critical designation (VRM) ----
     @app.delete("/api/v1/vendors/{vid}/critical")
@@ -3311,8 +3357,11 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/v2/assessments")
     def v2_list_assessments(s: Session = Depends(db), u: User = Depends(require("engagement.view"))):
+        from sqlalchemy.orm import defer
         out = []
-        for a in s.scalars(select(AssessmentRecord)).all():
+        # Defer the heavy structured_json payload — the list view never uses it.
+        for a in s.scalars(select(AssessmentRecord)
+                           .options(defer(AssessmentRecord.structured_json))).all():
             if not _can_view_assessment(u, a):
                 continue
             out.append({"assessment_id": a.assessment_id, "engagement_id": a.engagement_id,
@@ -4118,6 +4167,12 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
         from .features import graph as GRAPH
         return GRAPH.build_graph(s)
 
+    @app.get("/api/v2/graph/network")
+    def v2_graph_network(u: User = Depends(require("vendor.view")), s: Session = Depends(db)):
+        """Node-link data for the interactive entity brain map (read-only, live DB)."""
+        from .features import graph as GRAPH
+        return GRAPH.network(s)
+
     @app.post("/api/v2/graph/contagion")
     def v2_graph_contagion(b: ContagionIn, s: Session = Depends(db),
                            u: User = Depends(require("vendor.view"))):
@@ -4915,8 +4970,11 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
         purpose/vendor_id narrow further. Used by the Documents and AI Reports views."""
         from .features.documents import StoredDocument
         from .features.registry_models import VendorRecord
+        from sqlalchemy.orm import defer
         AI_PURPOSES = ("fdd_report", "reputation_report", "fdd_reputation_report", "proassess_report")
-        q = s.query(StoredDocument)
+        # Never load the base64 blob for a list view — it is the single biggest
+        # over-fetch (file content is 100s of KB/row and is not serialized here).
+        q = s.query(StoredDocument).options(defer(StoredDocument.data_b64))
         if purpose:
             q = q.filter(StoredDocument.purpose == purpose)
         if vendor_id:
@@ -6909,6 +6967,193 @@ def create_app(db_url: Optional[str] = None) -> FastAPI:
         audit(s, "v2.learnings_captured", u.username, {"engagement_id": eid, "count": len(created)})
         s.commit()
         return {"captured": len(created), "learnings": [LEARN.row(l) for l in created]}
+
+    # ================= EXTERNAL INTEGRATION CONNECTORS =================
+    from .features import integrations as INTEG
+
+    @app.get("/api/v2/integrations/catalog")
+    def v2_integrations_catalog(u: User = Depends(require("admin.integrations"))):
+        """The catalogue of available external connectors (no secrets)."""
+        return {"connectors": INTEG.catalog()}
+
+    @app.get("/api/v2/integrations")
+    def v2_integrations_list(s: Session = Depends(db),
+                             u: User = Depends(require("admin.integrations"))):
+        return {"connectors": [INTEG.config_row(s, c.key) for c in
+                               [INTEG._CONNECTORS[k]() for k in INTEG._CONNECTORS]]}
+
+    @app.get("/api/v2/integrations/{key}")
+    def v2_integration_get(key: str, s: Session = Depends(db),
+                           u: User = Depends(require("admin.integrations"))):
+        if key not in INTEG._CONNECTORS:
+            raise HTTPException(404, "unknown connector")
+        return INTEG.config_row(s, key)
+
+    @app.put("/api/v2/integrations/{key}")
+    def v2_integration_config(key: str, b: ConnectorConfigIn, s: Session = Depends(db),
+                              u: User = Depends(require("admin.integrations"))):
+        try:
+            row = INTEG.upsert_config(s, key, enabled=b.enabled, base_url=b.base_url,
+                                      secret_name=b.secret_name, config=b.config, actor=u.username)
+        except KeyError:
+            raise HTTPException(404, "unknown connector")
+        audit(s, "v2.connector_configured", u.username, {"connector": key, "enabled": b.enabled})
+        s.commit()
+        return row
+
+    @app.post("/api/v2/integrations/{key}/test")
+    def v2_integration_test(key: str, s: Session = Depends(db),
+                            u: User = Depends(require("admin.integrations"))):
+        conn = INTEG.get_connector(s, key)
+        if not conn:
+            raise HTTPException(404, "unknown connector")
+        res = conn.test_connection()
+        audit(s, "v2.connector_test", u.username, {"connector": key, "mode": res.get("mode")})
+        return res
+
+    @app.post("/api/v2/integrations/{key}/sync")
+    def v2_integration_sync(key: str, b: ConnectorSyncIn, s: Session = Depends(db),
+                            u: User = Depends(require("admin.integrations"))):
+        if key not in INTEG._CONNECTORS:
+            raise HTTPException(404, "unknown connector")
+        if b.vendor_id:
+            res = INTEG.sync_vendor(s, key, b.vendor_id, actor=u.username)
+            audit(s, "v2.connector_sync", u.username, {"connector": key, "vendor_id": b.vendor_id})
+            s.commit()
+            return res
+        # all (or an explicit set) — capped for safety
+        from .features.registry_models import VendorRecord
+        vids = b.vendor_ids or [v.vendor_id for v in
+                                s.scalars(select(VendorRecord).limit(200)).all()]
+        res = INTEG.sync_all_vendors(s, key, vids, actor=u.username)
+        audit(s, "v2.connector_sync_all", u.username, {"connector": key, "vendors": len(vids)})
+        s.commit()
+        return res
+
+    @app.get("/api/v2/integrations/{key}/logs")
+    def v2_integration_logs(key: str, s: Session = Depends(db),
+                            u: User = Depends(require("admin.integrations"))):
+        if key not in INTEG._CONNECTORS:
+            raise HTTPException(404, "unknown connector")
+        return {"logs": INTEG.recent_logs(s, key)}
+
+    # ================= CONTENT STUDIO ("Admin Change") =================
+    from .features import content as CONTENT
+
+    @app.get("/api/v2/content/overrides")
+    def v2_content_overrides(s: Session = Depends(db)):
+        """Public: the effective default->override map the client applies. No
+        sensitive data — only custom UI copy — so the login screen localises too."""
+        return {"overrides": CONTENT.overrides_map(s)}
+
+    @app.get("/api/v2/content/registry")
+    def v2_content_registry(s: Session = Depends(db),
+                            u: User = Depends(require("admin.content"))):
+        return CONTENT.registry_rows(s)
+
+    @app.put("/api/v2/content/item/{key:path}")
+    def v2_content_set(key: str, b: ContentSetIn, s: Session = Depends(db),
+                       u: User = Depends(require("admin.content"))):
+        try:
+            r = CONTENT.set_override(s, key, b.value, actor=u.username)
+        except KeyError:
+            raise HTTPException(404, "unknown content key")
+        audit(s, "v2.content_set", u.username, {"key": key})
+        s.commit()
+        return r
+
+    @app.post("/api/v2/content/item/{key:path}/reset")
+    def v2_content_reset(key: str, s: Session = Depends(db),
+                         u: User = Depends(require("admin.content"))):
+        r = CONTENT.reset(s, key)
+        audit(s, "v2.content_reset", u.username, {"key": key})
+        s.commit()
+        return r
+
+    @app.post("/api/v2/content/custom")
+    def v2_content_custom(b: ContentCustomIn, s: Session = Depends(db),
+                          u: User = Depends(require("admin.content"))):
+        try:
+            r = CONTENT.add_custom(s, b.source_text, b.value, actor=u.username)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        audit(s, "v2.content_custom", u.username, {"source": b.source_text[:60]})
+        s.commit()
+        return r
+
+    @app.post("/api/v2/content/reset-all")
+    def v2_content_reset_all(s: Session = Depends(db),
+                             u: User = Depends(require("admin.content"))):
+        r = CONTENT.reset_all(s)
+        audit(s, "v2.content_reset_all", u.username, r)
+        s.commit()
+        return r
+
+    @app.get("/api/v2/content/export")
+    def v2_content_export(s: Session = Depends(db),
+                          u: User = Depends(require("admin.content"))):
+        return CONTENT.export_all(s)
+
+    @app.post("/api/v2/content/import")
+    def v2_content_import(b: ContentImportIn, s: Session = Depends(db),
+                          u: User = Depends(require("admin.content"))):
+        r = CONTENT.import_all(s, b.data, actor=u.username)
+        audit(s, "v2.content_import", u.username, r)
+        s.commit()
+        return r
+
+    # ================= NAV & LAYOUT CONFIG (structural) =================
+    from .features import layout as LAYOUT
+
+    @app.get("/api/v2/layout/config")
+    def v2_layout_config(s: Session = Depends(db)):
+        """Public: the nav show/hide + order map the client applies to the shell."""
+        return LAYOUT.layout_config(s)
+
+    @app.get("/api/v2/layout/catalog")
+    def v2_layout_catalog(s: Session = Depends(db),
+                          u: User = Depends(require("admin.content"))):
+        return LAYOUT.catalog(s)
+
+    @app.put("/api/v2/layout/item/{datav}")
+    def v2_layout_item(datav: str, b: LayoutItemIn, s: Session = Depends(db),
+                       u: User = Depends(require("admin.content"))):
+        try:
+            r = LAYOUT.set_item(s, datav, hidden=b.hidden, sort_order=b.order, actor=u.username)
+        except KeyError:
+            raise HTTPException(404, "unknown nav item")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        audit(s, "v2.layout_item", u.username, {"item": datav})
+        s.commit()
+        return r
+
+    @app.put("/api/v2/layout/group/{slug}")
+    def v2_layout_group(slug: str, b: LayoutItemIn, s: Session = Depends(db),
+                        u: User = Depends(require("admin.content"))):
+        try:
+            r = LAYOUT.set_group(s, slug, hidden=b.hidden, sort_order=b.order, actor=u.username)
+        except KeyError:
+            raise HTTPException(404, "unknown group")
+        audit(s, "v2.layout_group", u.username, {"group": slug})
+        s.commit()
+        return r
+
+    @app.post("/api/v2/layout/reorder")
+    def v2_layout_reorder(b: LayoutReorderIn, s: Session = Depends(db),
+                          u: User = Depends(require("admin.content"))):
+        r = LAYOUT.reorder_group(s, b.slug, b.order, actor=u.username)
+        audit(s, "v2.layout_reorder", u.username, {"group": b.slug})
+        s.commit()
+        return r
+
+    @app.post("/api/v2/layout/reset-all")
+    def v2_layout_reset(s: Session = Depends(db),
+                        u: User = Depends(require("admin.content"))):
+        r = LAYOUT.reset_all(s)
+        audit(s, "v2.layout_reset", u.username, r)
+        s.commit()
+        return r
 
     # ================= ENGAGEMENT ASSESSMENT REPORT (Vendor 360) =================
     @app.get("/api/v2/engagements/{eid}/assessment-report")

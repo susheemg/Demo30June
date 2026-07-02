@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Brata TPRM — Technical Design & Architecture v4.2.2</title>
+<title>Brata TPRM — Technical Design & Architecture v4.9.0</title>
 <style>
 
 :root{
@@ -174,11 +174,11 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
 <div class="doc-class cls">Technical Design &amp; Architecture · Controlled · DOC-TDA-001</div>
 <div class="logo-mark logo">B</div>
 <h1>Brata <span>TPRM</span><br>Technical Design<br>&amp; Architecture</h1>
-<p class="subtitle sub">The unified technical reference for the Brata Third-Party Risk Management platform — system architecture, services, databases, endpoints, data flows, infrastructure, security controls, and the user model. Grounded in the deployed v4.2.2 codebase.</p>
+<p class="subtitle sub">The unified technical reference for the Brata Third-Party Risk Management platform — system architecture, services, databases, endpoints, data flows, infrastructure, security controls, and the user model. Grounded in the deployed v4.9.0 codebase.</p>
 <div class="cover-meta cmeta">
 <div class="cover-meta-item"><div class="label k">Document ID</div><div class="val v">DOC-TDA-001 (merges TDD + ARC)</div></div>
-<div class="cover-meta-item"><div class="label k">Version</div><div class="val v">4.2.2 · 12 June 2026</div></div>
-<div class="cover-meta-item"><div class="label k">Platform scale</div><div class="val v">339 endpoints · 88 tables · 50 modules</div></div>
+<div class="cover-meta-item"><div class="label k">Version</div><div class="val v">4.9.0 · 2 July 2026</div></div>
+<div class="cover-meta-item"><div class="label k">Platform scale</div><div class="val v">398 endpoints · 90 tables · 53 modules</div></div>
 <div class="cover-meta-item"><div class="label k">AI surface</div><div class="val v">31 prompts · 12 domains · 6 providers</div></div>
 <div class="cover-meta-item"><div class="label k">Runtime</div><div class="val v">Python 3.12 · FastAPI · SQLAlchemy 2.0</div></div>
 <div class="cover-meta-item"><div class="label k">Classification</div><div class="val v">Confidential — Internal &amp; Design Partners</div></div>
@@ -190,7 +190,7 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
 <ol>
 <li><span class="toc-title">Executive &amp; system overview</span><span class="toc-desc">Purpose, principles, capability map</span></li>
 <li><span class="toc-title">System architecture</span><span class="toc-desc">Detailed component diagram, layered design</span></li>
-<li><span class="toc-title">Endpoint inventory</span><span class="toc-desc">339 endpoints by namespace &amp; domain</span></li>
+<li><span class="toc-title">Endpoint inventory</span><span class="toc-desc">398 endpoints by namespace &amp; domain</span></li>
 <li><span class="toc-title">Data flow</span><span class="toc-desc">Request lifecycle, assessment &amp; AI flows</span></li>
 <li><span class="toc-title">Data model &amp; repository</span><span class="toc-desc">Entities, IDs, stores, repo layout</span></li>
 <li><span class="toc-title">Service module catalogue</span><span class="toc-desc">50 feature modules</span></li>
@@ -198,6 +198,7 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
 <li><span class="toc-title">Security &amp; controls</span><span class="toc-desc">Seven layers, AI governance, audit</span></li>
 <li><span class="toc-title">User &amp; access model</span><span class="toc-desc">Roles, permissions, authentication</span></li>
 <li><span class="toc-title">Reliability &amp; release changes</span><span class="toc-desc">v4.2.1 / v4.2.2 hardening</span></li>
+<li><span class="toc-title">Release changes v4.6 &ndash; v4.9</span><span class="toc-desc">Connectors, Content Studio, Layout config, brain map, hardening</span></li>
 <li><span class="toc-title">Non-functional &amp; roadmap</span><span class="toc-desc">Performance, gaps, multi-tenancy</span></li>
 </ol>
 </div><div class="section page-break" id="overview">
@@ -296,10 +297,10 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
 <div class="section page-break" id="arch">
 <div class="kicker">SECTION 02</div>
 <h2>System architecture</h2>
-<p class="lede">Brata is a single FastAPI service organised into clear tiers: a browser SPA, a versioned API surface of 339 endpoints, a governed AI gateway, 50 feature services, and a portable data layer. External egress is limited to LLM providers and public risk-data feeds. The diagram below shows every major component, the data stores, and how requests flow.</p>
+<p class="lede">Brata is a single FastAPI service organised into clear tiers: a browser SPA, a versioned API surface of 376 endpoints, a governed AI gateway, 50 feature services, and a portable data layer. External egress is limited to LLM providers and public risk-data feeds. The diagram below shows every major component, the data stores, and how requests flow.</p>
 
 <div class="metrics">
-<div class="metric"><div class="mv">339</div><div class="ml">REST endpoints (v1 + v2 + auth/SCIM)</div></div>
+<div class="metric"><div class="mv">398</div><div class="ml">REST endpoints (v1 + v2 + auth/SCIM)</div></div>
 <div class="metric"><div class="mv">88</div><div class="ml">Tables (86 ORM + 2 raw-SQL)</div></div>
 <div class="metric"><div class="mv">50</div><div class="ml">Feature service modules</div></div>
 <div class="metric"><div class="mv">6</div><div class="ml">Pluggable LLM providers + failover</div></div>
@@ -333,7 +334,7 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
 
 <!-- ===== API TIER ===== -->
 <rect x="20" y="140" width="880" height="118" rx="9" fill="#E8F5EE" stroke="#9dcdb8"/>
-<text x="34" y="160" fill="#0e5c40" font-size="11" font-weight="700">API SURFACE · 339 endpoints</text>
+<text x="34" y="160" fill="#0e5c40" font-size="11" font-weight="700">API SURFACE · 398 endpoints</text>
 <text x="820" y="160" fill="#0e5c40" font-size="9">FastAPI create_app(db_url)</text>
 <text x="34" y="184" fill="#0e5c40" font-size="9" font-weight="700">/api/v2 (registry · 222)</text><rect x="34" y="190" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="40" y="203.5" fill="#0e5c40" font-size="8.7" font-weight="600">vendors</text><text x="163" y="203.5" text-anchor="end" fill="#888" font-size="8">7</text><rect x="175" y="190" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="181" y="203.5" fill="#0e5c40" font-size="8.7" font-weight="600">engagements</text><text x="304" y="203.5" text-anchor="end" fill="#888" font-size="8">14</text><rect x="316" y="190" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="322" y="203.5" fill="#0e5c40" font-size="8.7" font-weight="600">assessments</text><text x="445" y="203.5" text-anchor="end" fill="#888" font-size="8">9</text><rect x="457" y="190" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="463" y="203.5" fill="#0e5c40" font-size="8.7" font-weight="600">findings</text><text x="586" y="203.5" text-anchor="end" fill="#888" font-size="8">9</text><rect x="598" y="190" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="604" y="203.5" fill="#0e5c40" font-size="8.7" font-weight="600">remediations</text><text x="727" y="203.5" text-anchor="end" fill="#888" font-size="8">4</text><rect x="739" y="190" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="745" y="203.5" fill="#0e5c40" font-size="8.7" font-weight="600">incidents</text><text x="868" y="203.5" text-anchor="end" fill="#888" font-size="8">11</text><rect x="34" y="214" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="40" y="227.5" fill="#0e5c40" font-size="8.7" font-weight="600">contracts</text><text x="163" y="227.5" text-anchor="end" fill="#888" font-size="8">8</text><rect x="175" y="214" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="181" y="227.5" fill="#0e5c40" font-size="8.7" font-weight="600">exit</text><text x="304" y="227.5" text-anchor="end" fill="#888" font-size="8">11</text><rect x="316" y="214" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="322" y="227.5" fill="#0e5c40" font-size="8.7" font-weight="600">sanctions</text><text x="445" y="227.5" text-anchor="end" fill="#888" font-size="8">8</text><rect x="457" y="214" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="463" y="227.5" fill="#0e5c40" font-size="8.7" font-weight="600">pestle</text><text x="586" y="227.5" text-anchor="end" fill="#888" font-size="8">7</text><rect x="598" y="214" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="604" y="227.5" fill="#0e5c40" font-size="8.7" font-weight="600">performance</text><text x="727" y="227.5" text-anchor="end" fill="#888" font-size="8">15</text><rect x="739" y="214" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="745" y="227.5" fill="#0e5c40" font-size="8.7" font-weight="600">oss</text><text x="868" y="227.5" text-anchor="end" fill="#888" font-size="8">11</text><rect x="34" y="238" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="40" y="251.5" fill="#0e5c40" font-size="8.7" font-weight="600">regulations</text><text x="163" y="251.5" text-anchor="end" fill="#888" font-size="8">6</text><rect x="175" y="238" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="181" y="251.5" fill="#0e5c40" font-size="8.7" font-weight="600">integrity</text><text x="304" y="251.5" text-anchor="end" fill="#888" font-size="8">6</text><rect x="316" y="238" width="135" height="20" rx="4" fill="#fff" stroke="#9dcdb8"/><text x="322" y="251.5" fill="#0e5c40" font-size="8.7" font-weight="600">management</text><text x="445" y="251.5" text-anchor="end" fill="#888" font-size="8">6</text>
 <!-- ===== AI GATEWAY ===== -->
@@ -582,7 +583,7 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
   <table class="t">
     <tr><th>Path</th><th>Contents</th></tr>
     <tr><td><code>app/bro_app.py</code></td><td>FastAPI factory <code>create_app(db_url)</code>; all 339 endpoints; auth, RBAC, audit helpers</td></tr>
-    <tr><td><code>app/web.py</code></td><td>SPA HTML shell + static serving</td></tr>
+    <tr><td><code>app/web.py</code></td><td>SPA HTML shell + static serving; fixed top bar with independently-scrolling sidebar and main panes (viewport-locked app container, overflow-contained shell)</td></tr>
     <tr><td><code>app/static/app.js</code></td><td>The single-page app — 23 views, all API calls</td></tr>
     <tr><td><code>app/agents/</code></td><td>llm_config, adapters, provider, langgraph_flow, agent_engine — the AI layer</td></tr>
     <tr><td><code>app/features/</code></td><td>50 domain modules — services, models, security, governance</td></tr>
@@ -777,6 +778,26 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
 
 </div>
 </div>
+<div class="section page-break" id="changes49">
+<div class="kicker">SECTION 10B</div>
+<h2>What changed in v4.6 &ndash; v4.9</h2>
+<p class="lede">Four release lines: external monitoring connectors, no-code content &amp; layout administration, the interactive entity brain map, and transport/header hardening. No breaking changes; migration chain <code>connector_suite &rarr; content_studio &rarr; layout_config</code>.</p>
+<table class="t">
+<tr><th>Area</th><th>Change</th><th>Version</th></tr>
+<tr><td>External connectors <span class="chip new">NEW</span></td><td>Connector framework + six integrations (SAP, ProcessUnity, RapidRatings, Interos, SecurityScorecard, RiskRecon); offline-safe stub mode, live HTTPS with <code>BRO_CONN_&lt;KEY&gt;_KEY</code>; signals normalised into Vendor 360 (<code>/api/v2/integrations/*</code>, 7 endpoints)</td><td>4.6.0</td></tr>
+<tr><td>Content Studio <span class="chip new">NEW</span></td><td>"Admin Change" section: DB-backed override of any catalogued UI string (1,188 strings across 17 groups) plus custom-string overrides; applied client-side by an exact-match text pass with MutationObserver; public read (<code>/api/v2/content/overrides</code>), editing gated by new <code>admin.content</code> permission; export/import; table <code>content_override</code></td><td>4.7.0&ndash;4.7.1</td></tr>
+<tr><td>Live preview</td><td>Preview mode applies buffered edits across the running app client-side before save, with revert and bulk save</td><td>4.7.2</td></tr>
+<tr><td>Layout config <span class="chip new">NEW</span></td><td>Structural nav administration: show/hide and reorder navigation items and groups; table <code>layout_setting</code>; public config read, admin-gated writes (<code>/api/v2/layout/*</code>, 6 endpoints); role-gated items excluded by design</td><td>4.8.0</td></tr>
+<tr><td>RBAC seed fix</td><td><code>rbac.seed()</code> refreshes full-access ("ALL") roles on every boot so newly introduced permissions attach to the admin role automatically</td><td>4.7.0</td></tr>
+<tr><td>Entity brain map <span class="chip new">NEW</span></td><td>Interactive canvas force-graph over the live estate (vendors, shared fourth parties, common owners, business units) with 2D/3D orbit modes, click-to-inspect detail panel, neighbour navigation, search, type filters, drag/zoom, contagion &amp; Vendor 360 deep links; data from new read-only <code>GET /api/v2/graph/network</code> (<code>vendor.view</code>)</td><td>4.9.0</td></tr>
+<tr><td>Transport efficiency <span class="chip new">P1</span></td><td>GZip middleware on responses &ge;1KB (the app bundle compresses ~75%); <code>Cache-Control: public, max-age=86400, immutable</code> on version-busted static assets</td><td>4.9.0</td></tr>
+<tr><td>Header hardening <span class="chip new">P1</span></td><td><code>Permissions-Policy</code> (camera/mic/geo/payment denied) and <code>Cross-Origin-Opener-Policy: same-origin</code> added to the existing CSP/HSTS/frame/nosniff set</td><td>4.9.0</td></tr>
+<tr><td>Cluster collapse <span class="chip new">NEW</span></td><td>Ownership clusters fold into expandable super-nodes on the brain map (member count badged; links re-route); per-cluster and estate-wide controls</td><td>4.10.0</td></tr>
+<tr><td>Concentration replay <span class="chip new">NEW</span></td><td>Time slider + replay animates how the estate and its concentration built up, dated from engagement start dates; live vendor/link counts while scrubbing; <code>since</code> + <code>timeline</code> added to <code>/graph/network</code></td><td>4.11.0</td></tr>
+<tr><td>Fluid UX layer</td><td>Motion polish (card/nav/button transitions, view fade-in), consistent field labels and gold focus rings on all form controls, <code>prefers-reduced-motion</code> respected globally</td><td>4.9.0</td></tr>
+</table>
+</div>
+
 <div class="section page-break" id="nfr">
   <div class="section-head">
     <div class="section-kicker">SECTION 11</div>
@@ -792,18 +813,20 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
     <div class="metric"><div class="mv">&lt;20<span style="font-size:13px">ms</span></div><div class="ml">All interactive paths at current scale</div></div>
   </div>
 
-  <h3>8.2 Known gaps &amp; remediation (from internal code review)</h3>
+  <h3>8.2 Gap register &amp; remediation status (v4.5.2 code review)</h3>
+  <p>The gap register from the original internal review has been worked down. Items 1&ndash;6 are <strong>remediated and verified</strong> in v4.5.2 with the evidence noted below; items 7&ndash;8 remain on the roadmap.</p>
   <table class="t">
-    <tr><th>#</th><th>Gap</th><th>Priority</th><th>Fix</th></tr>
-    <tr><td>1</td><td>No LLM call timeouts — a hung provider can stall the worker</td><td><span class="chip r">P0</span></td><td>Per-call timeout + retry/jitter + ordered failover</td></tr>
-    <tr><td>2</td><td>SQLite without WAL — concurrent writes can lock</td><td><span class="chip o">P1</span></td><td>Enable WAL + busy_timeout (3 lines)</td></tr>
-    <tr><td>3</td><td>Search is Python-side LIKE — slows at 10k+ vendors</td><td><span class="chip o">P1</span></td><td>SQL-side <code>ilike</code> + FTS5 (~30 min)</td></tr>
-    <tr><td>4</td><td>101 silent <code>except: pass</code> sites</td><td><span class="chip gold">P2</span></td><td>Route through <code>log_json()</code></td></tr>
-    <tr><td>5</td><td>List serializers over-fetch (150KB where UI uses 6 fields)</td><td><span class="chip gold">P2</span></td><td>Slim serializers + cache-bust app.js</td></tr>
-    <tr><td>6</td><td>Missing FK indexes on hot paths</td><td><span class="chip gold">P2</span></td><td>Six composite indexes (1 Alembic revision)</td></tr>
-    <tr><td>7</td><td>Monolithic <code>bro_app.py</code> (6,673 lines)</td><td><span class="chip gold">P2</span></td><td>APIRouter split per domain</td></tr>
-    <tr><td>8</td><td>No live-model evals (deterministic paths only)</td><td><span class="chip b">P3</span></td><td>5–10 canned assessments, band-level assertions per provider</td></tr>
+    <tr><th>#</th><th>Gap</th><th>Priority</th><th>Remediation &amp; evidence</th><th>Status</th></tr>
+    <tr><td>1</td><td>No LLM call timeouts — a hung provider can stall the worker</td><td><span class="chip r">P0</span></td><td>Per-call wall-clock timeout (30&nbsp;s default), bounded retry with jitter on transient errors, ordered provider failover, and a transient-error classifier (timeout/429/5xx vs. 4xx). <em>Verified: timeout/retry config asserted; retry loop fires on a simulated transient then succeeds.</em></td><td><span class="chip g">DONE</span></td></tr>
+    <tr><td>2</td><td>SQLite without WAL — concurrent writes can lock</td><td><span class="chip o">P1</span></td><td>Connection hook sets <code>journal_mode=WAL</code>, <code>busy_timeout=5000</code>, <code>synchronous=NORMAL</code> on every SQLite connection. <em>Verified at runtime on a fresh connection.</em></td><td><span class="chip g">DONE</span></td></tr>
+    <tr><td>3</td><td>Search is Python-side LIKE — slows at 10k+ vendors</td><td><span class="chip o">P1</span></td><td>Global search and vendor search are now SQL-side <code>ilike</code> with server-side filtering, archived-row exclusion and a bounded <code>limit</code> — no full-table Python scan. <em>Verified: ilike match, archived exclusion and filters return correctly.</em></td><td><span class="chip g">DONE</span></td></tr>
+    <tr><td>4</td><td>Silent <code>except: pass</code> sites</td><td><span class="chip gold">P2</span></td><td>All application-level swallows route through <code>_obs_swallow()</code> &rarr; <code>log_json('swallowed_exception', …)</code>. The only remaining bare guards are inside the logger itself (observability must never recurse or change control flow). <em>Verified: zero silent application sites remain.</em></td><td><span class="chip g">DONE</span></td></tr>
+    <tr><td>5</td><td>List serializers over-fetch (heavy columns loaded but unused)</td><td><span class="chip gold">P2</span></td><td>Document and assessment list queries <code>defer()</code> the heavy columns (<code>data_b64</code> file content, <code>structured_json</code> payload) so they are never loaded for list views; detail endpoints still return them. app.js is already content-hash cache-busted. <em>Verified: an 83-row document list containing a 200&nbsp;KB blob serialises to ~30&nbsp;KB with no base64.</em></td><td><span class="chip g">DONE</span></td></tr>
+    <tr><td>6</td><td>Missing FK indexes on hot paths</td><td><span class="chip gold">P2</span></td><td>Composite/FK indexes shipped via Alembic (<code>g6_fk_indexes</code>) across engagement&rarr;vendor, assessment&rarr;engagement, finding&rarr;vendor/status, incident&rarr;vendor and more. <em>Verified: 41 <code>ix_*</code> indexes present after migration.</em></td><td><span class="chip g">DONE</span></td></tr>
+    <tr><td>7</td><td>Monolithic <code>bro_app.py</code></td><td><span class="chip gold">P2</span></td><td>APIRouter split per domain — planned (one release of effort), kept safe by the test suite.</td><td><span class="chip b">ROADMAP</span></td></tr>
+    <tr><td>8</td><td>No live-model evals (deterministic paths only)</td><td><span class="chip b">P3</span></td><td>5&ndash;10 canned assessments with band-level assertions per provider — planned.</td><td><span class="chip b">ROADMAP</span></td></tr>
   </table>
+  <div class="callout info"><span class="i">&#9432;</span><div><strong>Reliability posture</strong>Items 1&ndash;6 (resilient AI calls, concurrency-safe persistence, scalable search, full observability of swallowed errors, lean payloads, indexed hot paths) are now enterprise-grade and regression-tested. A dedicated suite (<code>tests/test_reliability_fixes.py</code>) locks each remediation against regression. The whole codebase compiles clean (90 modules) with zero FIXME/HACK markers.</div></div>
 
   <h3>8.3 Multi-tenancy roadmap</h3>
   <p>The platform is designed for multi-tenancy as a phased, configuration-driven evolution. Phase 1 (the data layer) has been designed and prototyped: a <code>tenancy.py</code> resolution layer, <code>tenant_id</code> on all data tables, per-tenant ID sequences, Postgres RLS as defence-in-depth, and a tenant-resolution layer engineered so that <strong>database-per-tenant becomes a configuration change</strong> for Tier-1 regulated buyers who demand physical isolation. Subsequent phases add per-endpoint query scoping, per-tenant auth/SSO, per-tenant methodology and AI budgets, and isolation testing.</p>
@@ -819,8 +842,8 @@ figcaption{font-size:11px;color:var(--mute);text-align:center;margin-top:10px;fo
   <div class="callout info"><span class="i">&#9432;</span><div><strong>Design intent</strong>Items 1–6 of the gap register are engineering hygiene that remove risk; item 7 is an architecture refactor; item 8 begins continuous model evaluation. None requires rework of the core architecture &mdash; tenancy, Postgres, SSO, and regulator-pack automation all slot into the existing design.</div></div>
 
   <div class="footer-note">
-    <strong>Brata TPRM — Technical Design Document (DOC-TDD-001)</strong> · v4.2.0 · 12 June 2026 · Confidential.
-    Every figure and claim in this document is grounded in the deployed v4.2.0 codebase (git <code>dcd5dd7</code>).
+    <strong>Brata TPRM — Technical Design Document (DOC-TDD-001)</strong> · v4.5.2 · 22 June 2026 · Confidential.
+    Every figure and claim in this document is grounded in the deployed v4.5.2 codebase. Gap register items 1–6 remediated and regression-tested (tests/test_reliability_fixes.py).
     Repository: github.com/brata-platform/brata.
   </div>
 </div>

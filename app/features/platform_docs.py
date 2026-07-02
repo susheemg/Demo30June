@@ -15,6 +15,16 @@ Design notes
 from __future__ import annotations
 
 import os
+
+
+def _obs_swallow(_ctx, _exc):
+    """Swallow a non-critical exception but emit one observable log line."""
+    try:
+        from .security import log_json as _lj
+        _lj('swallowed_exception', where=_ctx,
+            error=f'{type(_exc).__name__}: {str(_exc)[:200]}')
+    except Exception:
+        pass
 import re
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -177,8 +187,8 @@ def ai_update_doc(s: Session, kind: str, actor: str = "system") -> dict:
         from . import llm_config  # noqa: F401
         if os.environ.get("BRO_DOC_AI_ENRICH") == "1":
             ai_mode = "gateway-enriched"
-    except Exception:
-        pass
+    except Exception as _e:
+        _obs_swallow('platform_docs.ai_enrich', _e)
 
     row.html = html
     row.doc_version = version
